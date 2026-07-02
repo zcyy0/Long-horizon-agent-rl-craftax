@@ -11,9 +11,6 @@ primitive level become both tractable *and* measurable. We ask **which credit si
 over these subgoal decisions learns best, and whether the credit it assigns lands on the
 decisions that causally mattered.**
 
-> Status: the environment harness and evaluation scaffolding are built and tested; the
-> credit-assignment study is in progress. This document is the plan, not a results paper.
-
 ---
 
 ## 1. Why this problem
