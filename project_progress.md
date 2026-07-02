@@ -10,9 +10,6 @@ button presses then becomes a sequence of only a few hundred decisions. That is 
 enough to study a question that is hopeless at the button level — **when a reward finally
 arrives, which earlier decisions actually earned it?**
 
-> Status: the game harness and the evaluation tools are built and tested. The
-> credit-assignment experiments are next. This is a plan, not a results paper.
-
 ---
 
 ## 1. The problem
