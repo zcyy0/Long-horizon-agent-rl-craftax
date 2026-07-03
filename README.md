@@ -10,6 +10,10 @@ button presses then becomes a sequence of only a few hundred decisions. That is 
 enough to study a question that is hopeless at the button level — **when a reward finally
 arrives, which earlier decisions actually earned it?**
 
+> Status: the game harness and the evaluation tools are built and tested, and an
+> untrained planner has been profiled (see [`PROGRESS.md`](PROGRESS.md)). The
+> credit-assignment training experiments are next. This is a plan, not a results paper.
+
 ---
 
 ## 1. The problem
@@ -128,12 +132,11 @@ in *how each decision gets its credit*. Each one is chosen to isolate a single f
 
 | Method | How it assigns credit | What it isolates |
 |---|---|---|
-| Sequence advantage (GRPO) | one value for the whole episode | the floor: no timing at all |
-| Monte-Carlo reward-to-go | reward that follows each decision | timing alone |
+| Sequence advantage (GRPO) | sum all rewards into one episode score, give every decision that same score | the floor: no timing at all |
+| Monte-Carlo reward-to-go | each decision gets the rewards that come after it | timing alone |
 | GAE(λ) | timing, smoothed by a value estimate | what the value critic adds |
 | Potential-based shaping | hand-built from the tech-tree graph | expert knowledge vs. learning |
 | Randomized Return Decomposition | a *learned* per-decision reward | learned credit vs. simple propagation |
-| Uniform redistribution (IRCR) | spread the total reward evenly | a sanity check on the setup |
 | Optimal-transport redistribution | learned + structural | *(stretch goal)* |
 
 The one we expect to matter most is **Randomized Return Decomposition**. It learns a small
@@ -174,28 +177,16 @@ as a benchmark in its own right.
 
 ---
 
-## 6. Where things stand
+## 6. Status
 
-**Done and tested**
-- Full-Craftax text harness; renderer matches the native observation exactly.
-- Scripted controller: 11 skills (navigation, tech tree, survival), each with its own test.
-- The hierarchical loop: skill menu, dispatch, prompts, and the per-turn ledger.
-- LLM-policy plumbing, plus a client that talks to a served model.
-- Evaluation tools: rollout logging, the prerequisite graph and necessity labeler, and the
-  credit-quality metric.
+**Built and tested** — the full-Craftax text harness (renderer verified exact vs. native),
+the 11-skill scripted controller, the hierarchical loop and ledger, the evaluation tools
+(rollout logging, the prerequisite graph + necessity labeler, the credit-quality metric),
+and a GPU serving + rollout pipeline. An **untrained** planner has been profiled — see
+[`PROGRESS.md`](PROGRESS.md) for results.
 
-**In progress**
-- Serve the planner model and collect a batch of games to measure how it behaves — reward
-  sparsity, how far apart cause and reward sit, and throughput.
-
-**Planned**
-- The training loop, with a short supervised warm-up so the model reliably emits valid
-  moves.
-- The main study: run the methods from Section 4, score them on both axes above, and
-  ablate.
-
-**First real milestone:** the harness, the credit-quality metric, and a clean comparison
-of the four core methods, with proper seeds and held-out evaluation.
+**Next** — the training loop (with a short supervised warm-up), then the main study: run
+the methods in Section 4 and score them on both axes above.
 
 ---
 
@@ -209,3 +200,45 @@ of the four core methods, with proper seeds and held-out evaluation.
 - **Credit-assignment testbeds:** Key-to-Door (Hung et al., 2019; Mesnard et al., 2021).
 - **Hierarchy:** the options framework and semi-MDPs (Sutton, Precup & Singh, 1999).
 - **LLM agents with skill libraries:** Voyager, ELLM, SmartPlay.
+
+---
+
+## Getting started
+
+The environment layer is written from scratch against Craftax-core, with no heavy
+dependencies. It runs on CPU; only the LLM policy needs a GPU.
+
+```bash
+# create the environment (Python 3.10)
+conda create -y -p ./envs/craftax -c conda-forge --override-channels python=3.10 pip
+./envs/craftax/bin/pip install -r requirements.txt
+```
+
+**Run the self-checking demos** (each prints an `*_OK` line):
+
+```bash
+PY=./envs/craftax/bin/python
+$PY scripts/verify_native_obs.py     # renderer matches the native observation
+$PY scripts/verify_fog.py            # fog-of-war matches on dark floors
+$PY scripts/agent_loop_demo.py       # env loop, ledger, replay determinism
+$PY scripts/skill_*_demo.py          # each of the 11 skills
+$PY scripts/agent_demo.py            # the hierarchical loop end-to-end
+$PY scripts/rollout_dag_demo.py      # rollout logging + the credit-quality metric
+```
+
+**Run the LLM planner** (needs a GPU):
+
+```bash
+bash scripts/serve_qwen.sh                       # serve the planner (vLLM, localhost:8000)
+$PY scripts/collect_rollouts.py --n 6 --max-turns 64   # play + log games, print diagnostics
+```
+
+### Repository layout
+
+- `harness/` — the environment (`craftax_env`, `craftax_text`), the scripted skill
+  executor (`executor`), the hierarchical agent loop (`agent`), the LLM policy
+  (`vllm_policy`), and the credit-assignment evaluation (`rollout_log`, `credit_eval`).
+- `scripts/` — self-checking demos, the vLLM server launcher, and the rollout collector.
+- `PROGRESS.md` — results and current status.
+
+Contributions and discussion are welcome.
