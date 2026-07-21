@@ -122,4 +122,4 @@ The project is successful if it produces a correct GAE baseline, a reproducible 
 5. Train the optional rule-blind counterfactual critic.
 6. Run one compute-matched policy-learning comparison.
 
-A longer implementation and experiment plan is available in `docs/SOLO_RESEARCH_PLAN.md`.
+A longer implementation and experiment report is available in `project_report.md`.
