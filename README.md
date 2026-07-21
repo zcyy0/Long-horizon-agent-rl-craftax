@@ -169,7 +169,9 @@ $$
 A_{\text{CF}}^\pi(h_t,a_t)
 =
 \mathbb{E}[G \mid do(A_t=a_t), h_t, \pi \text{ thereafter}]
+$$
 -
+$$
 \mathbb{E}_{a' \sim b}
 \mathbb{E}[G \mid do(A_t=a'), h_t, \pi \text{ thereafter}].
 $$
