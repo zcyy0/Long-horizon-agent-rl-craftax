@@ -143,6 +143,7 @@ rather than complete ground-truth causal labels.
 ### 4.3 Event provenance
 
 A stronger mechanistic label records the exact realized chain:
+
 $$
 \[
 \text{planner decision}
