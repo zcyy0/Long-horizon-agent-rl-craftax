@@ -166,10 +166,9 @@ The primary causal estimand is the effect of replacing one planner action while 
 For history $h_t$, factual action $a_t$, alternative-action distribution $b$, and continuation policy $\pi$:
 
 $$
-A_{\text{CF}}^\pi(h_t,a_t)
-=
-\mathbb{E}[G \mid do(A_t=a_t), h_t, \pi \text{ thereafter}]
+A_{\text{CF}}^\pi(h_t,a_t) = \mathbb{E}[G \mid do(A_t=a_t), h_t, \pi \text{ thereafter}]
 $$
+
 -
 $$
 \mathbb{E}_{a' \sim b}
