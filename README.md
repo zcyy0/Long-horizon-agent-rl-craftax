@@ -1,4 +1,5 @@
 # Long-Horizon Causal Credit Assignment for Hierarchical LLM Agents in Craftax
+
 ## 0. Executive summary
 
 This project studies **how to assign credit to earlier subgoal decisions in long-horizon LLM-agent trajectories**.
@@ -110,7 +111,7 @@ A learned achievement-conditioned critic trained from factual trajectories and s
 
 ### H6 — Credit quality predicts learning
 
-Methods with better early intervention agreement, calibration, and top-\(k\) decision ranking will later achieve better reward-per-token and deeper progression.
+Methods with better early intervention agreement, calibration, and top-$k$ decision ranking will later achieve better reward-per-token and deeper progression.
 
 Failure of any hypothesis is still a useful result.
 
@@ -145,7 +146,6 @@ rather than complete ground-truth causal labels.
 A stronger mechanistic label records the exact realized chain:
 
 $$
-\[
 \text{planner decision}
 \rightarrow
 \text{resource unit acquired}
@@ -155,7 +155,6 @@ $$
 \text{item crafted}
 \rightarrow
 \text{achievement}.
-\]
 $$
 
 This distinguishes a necessary acquisition from redundant surplus collection.
@@ -164,17 +163,15 @@ This distinguishes a necessary acquisition from redundant surplus collection.
 
 The primary causal estimand is the effect of replacing one planner action while fixing the state and continuation policy.
 
-For history \(h_t\), factual action \(a_t\), alternative-action distribution \(b\), and continuation policy \(\pi\):
+For history $h_t$, factual action $a_t$, alternative-action distribution $b$, and continuation policy $\pi$:
 
 $$
-\[
 A_{\text{CF}}^\pi(h_t,a_t)
 =
 \mathbb{E}[G \mid do(A_t=a_t), h_t, \pi \text{ thereafter}]
 -
 \mathbb{E}_{a' \sim b}
 \mathbb{E}[G \mid do(A_t=a'), h_t, \pi \text{ thereafter}].
-\]
 $$
 
 This is a **policy-continuation causal advantage**. It is not a universal statement that an action was necessary under every possible future policy.
@@ -231,27 +228,27 @@ Current measurements indicate:
 
 ## 6. Formal problem formulation
 
-At planner decision \(t\):
+At planner decision $t$:
 
-- $(h_t)$: observation plus relevant ledger history or recurrent state;
-- \(a_t\): structured planner subgoal;
-- \(\tau_t\): number of primitive Craftax actions consumed by the skill;
-- \(r_{t,j}\): primitive reward at internal skill step \(j\);
-- \(h_{t+1}\): next planner history after skill execution.
+- $h_t$: observation plus relevant ledger history or recurrent state;
+- $a_t$: structured planner subgoal;
+- $\tau_t$: number of primitive Craftax actions consumed by the skill;
+- $r_{t,j}$: primitive reward at internal skill step $j$;
+- $h_{t+1}$: next planner history after skill execution.
 
 The discounted macro reward is
 
-\[
+$$
 R_t^{\text{macro}}
 =
 \sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
-\]
+$$
 
 The planner therefore operates in a semi-Markov decision process.
 
 The policy objective is
 
-\[
+$$
 J(\theta)
 =
 \mathbb{E}_{\pi_\theta}
@@ -260,15 +257,15 @@ J(\theta)
 \gamma^{\sum_{i<t}\tau_i}
 R_t^{\text{macro}}
 \right].
-\]
+$$
 
 The critic estimates
 
-\[
+$$
 V_\phi(h_t)
 \approx
 \mathbb{E}[G_t \mid h_t].
-\]
+$$
 
 The rule-blind learner receives observations, history, actions, state changes, durations, and rewards, but not the recipe graph.
 
@@ -359,7 +356,7 @@ This is the main baseline that every proposed method must beat.
 
 The duration-corrected TD residual is
 
-\[
+$$
 \delta_t
 =
 R_t^{\text{macro}}
@@ -368,33 +365,33 @@ R_t^{\text{macro}}
 V_{\phi_{\text{old}}}(h_{t+1})
 -
 V_{\phi_{\text{old}}}(h_t).
-\]
+$$
 
-Using \(\lambda\) per planner transition:
+Using $\lambda$ per planner transition:
 
-\[
+$$
 \hat A_t^{\text{SMDP-GAE}}
 =
 \delta_t
 +
 \gamma^{\tau_t}\lambda
 \hat A_{t+1}^{\text{SMDP-GAE}}.
-\]
+$$
 
-An ablation may instead decay \(\lambda\) per primitive step:
+An ablation may instead decay $\lambda$ per primitive step:
 
-\[
+$$
 \hat A_t
 =
 \delta_t
 +
 (\gamma\lambda)^{\tau_t}
 \hat A_{t+1}.
-\]
+$$
 
 The PPO objective is
 
-\[
+$$
 L_{\text{PPO}}
 =
 \mathbb{E}_t
@@ -405,14 +402,14 @@ L_{\text{PPO}}
 \operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t
 \right)
 \right].
-\]
+$$
 
 Required implementation details:
 
 - bootstrap across rollout truncations;
 - set bootstrap value to zero only after a true terminal transition;
 - compute GAE from old, detached value predictions;
-- train the critic toward \(V_{\text{old}}+\hat A\);
+- train the critic toward $V_{\text{old}}+\hat A$;
 - normalize advantages within an appropriate batch;
 - log value error, explained variance, policy KL, entropy, and clip fraction;
 - account for skill duration in reward accumulation and bootstrapping.
@@ -441,15 +438,15 @@ Treat every skill as one equal-length step. This demonstrates the importance of 
 
 ### B4 — Oracle potential-based shaping
 
-Use the known recipe graph to construct a potential \(\Phi(h)\).
+Use the known recipe graph to construct a potential $\Phi(h)$.
 
 For a variable-duration macro action:
 
-\[
+$$
 F(h_t,a_t,h_{t+1})
 =
 \gamma^{\tau_t}\Phi(h_{t+1})-\Phi(h_t).
-\]
+$$
 
 This is an expert-knowledge control, not the main method.
 
@@ -494,7 +491,7 @@ Build a trustworthy, reproducible primary baseline before introducing new credit
 
 ### Required ablations
 
-- \(\lambda \in \{0, 0.9, 0.95, 0.99, 1\}\), subject to compute;
+- $\lambda \in \{0, 0.9, 0.95, 0.99, 1\}$, subject to compute;
 - duration-aware vs duration-ignorant GAE;
 - current observation vs ledger-memory critic;
 - action-token-only vs all-generated-token policy loss;
@@ -526,32 +523,32 @@ At selected planner states:
 7. Use common random numbers or paired seeds when possible.
 8. Compare achievement outcomes, survival, floor depth, and discounted return.
 
-For candidate action \(a\):
+For candidate action $a$:
 
-\[
+$$
 \hat Q_{\text{branch}}(h_t,a)
 =
 \frac{1}{K}
 \sum_{k=1}^{K}
 G^{(k)}(h_t,a).
-\]
+$$
 
 The branch-based advantage is
 
-\[
+$$
 \hat A_t^{\text{branch}}
 =
 \hat Q_{\text{branch}}(h_t,a_t)
 -
 \sum_{a'} b(a' \mid h_t)
 \hat Q_{\text{branch}}(h_t,a').
-\]
+$$
 
 ### 11.2 Outcome vector
 
 Do not predict only total return. Record:
 
-\[
+$$
 \mathbf{Y}
 =
 [
@@ -561,7 +558,7 @@ Y_{\text{depth}},
 Y_{\text{health}},
 Y_{\text{resource changes}}
 ].
-\]
+$$
 
 This supports per-achievement causal effects and makes the result interpretable.
 
@@ -569,7 +566,7 @@ This supports per-achievement causal effects and makes the result interpretable.
 
 Report results for at least two baselines:
 
-- **policy baseline:** \(a' \sim \pi(\cdot \mid h_t)\);
+- **policy baseline:** $a' \sim \pi(\cdot \mid h_t)$;
 - **valid-action baseline:** uniform or stratified over valid alternative skills.
 
 The chosen baseline changes the meaning of the causal advantage and must be stated.
@@ -623,12 +620,12 @@ Approximate branch-and-replay effects without giving the model the recipe graph 
 
 Learn an achievement-conditioned action-value model:
 
-\[
+$$
 Q_\psi(h_t,a,k)
 \approx
 P(\text{achievement }k\text{ occurs within horizon }H
 \mid h_t, do(A_t=a), \pi).
-\]
+$$
 
 Also predict:
 
@@ -639,20 +636,20 @@ Also predict:
 - skill duration;
 - uncertainty.
 
-The estimated causal advantage for achievement \(k\) is
+The estimated causal advantage for achievement $k$ is
 
-\[
+$$
 \hat A_{\psi,k}(h_t,a_t)
 =
 Q_\psi(h_t,a_t,k)
 -
 \mathbb{E}_{a'\sim b}
 Q_\psi(h_t,a',k).
-\]
+$$
 
 A scalar training advantage can be formed as
 
-\[
+$$
 \hat A_\psi(h_t,a_t)
 =
 \sum_k w_k\hat A_{\psi,k}
@@ -660,7 +657,7 @@ A scalar training advantage can be formed as
 w_{\text{survival}}\hat A_{\psi,\text{survival}}
 +
 w_{\text{depth}}\hat A_{\psi,\text{depth}}.
-\]
+$$
 
 ### 12.3 Training data
 
@@ -720,7 +717,7 @@ The critic is **rule-blind**, not necessarily assumption-free. It learns from ac
 
 ### Adaptation
 
-Treat each achievement identity as a rewarding outcome \(k\).
+Treat each achievement identity as a rewarding outcome $k$.
 
 Learn how much an earlier action changed the probability of that outcome rather than conditioning on the complete future state.
 
@@ -760,11 +757,11 @@ Learn per-decision proxy rewards whose sampled sum reconstructs trajectory-level
 
 Prefer separate or factorized decomposition:
 
-\[
+$$
 \tilde r_t
 =
 \sum_{k=1}^{67}\tilde r_{t,k}.
-\]
+$$
 
 This provides an interpretable answer to:
 
@@ -795,21 +792,21 @@ Replace exact simulator branching with a learned action-conditioned dynamics mod
 
 ### Model components
 
-\[
+$$
 z_t = e_\psi(h_t)
-\]
+$$
 
-\[
+$$
 (z_{t+1}, \hat R_t, \hat \tau_t)
 =
 f_\psi(z_t,a_t)
-\]
+$$
 
-\[
+$$
 (\hat V_t,\hat{\mathbf Y}_t)
 =
 g_\psi(z_t)
-\]
+$$
 
 The model predicts:
 
@@ -824,11 +821,11 @@ The model predicts:
 
 For each candidate action, roll out imagined continuations and estimate:
 
-\[
+$$
 \hat Q_{\text{model}}(h_t,a)
 =
 \mathbb{E}_{\hat p_\psi,\pi}[G \mid h_t,a].
-\]
+$$
 
 Then compute a counterfactual action contrast.
 
@@ -906,7 +903,7 @@ Compute metrics:
 
 - ROC-AUC;
 - average precision;
-- precision at \(k\);
+- precision at $k$;
 - mean rank of relevant decisions.
 
 ### Event provenance
@@ -921,7 +918,7 @@ Compute metrics:
 - Spearman rank correlation with branch effects;
 - pairwise action-ranking accuracy;
 - calibration error by effect magnitude;
-- top-\(k\) decision replacement test;
+- top-$k$ decision replacement test;
 - sign accuracy;
 - mean squared error where scales are comparable;
 - effect confidence interval coverage.
@@ -996,7 +993,7 @@ Each method may generate its own training data after initialization, but the exp
 Run at least the following:
 
 1. **Native achievements:** original reward timing.
-2. **Fixed-delay rewards:** reveal achievement rewards after \(D\) planner decisions.
+2. **Fixed-delay rewards:** reveal achievement rewards after $D$ planner decisions.
 3. **Episode-bundled rewards:** provide the achievement sum only at the end.
 4. **Distractor rewards:** add irrelevant short-term rewards.
 5. **Long-gap curriculum:** emphasize deeper achievements and survival dependencies.
@@ -1038,7 +1035,7 @@ Never merge these labels into one undifferentiated “ground truth.”
 ### Time and SMDP structure
 
 - duration-corrected vs equal-duration discounting;
-- \(\lambda\) per macro transition vs per primitive step;
+- $\lambda$ per macro transition vs per primitive step;
 - short vs long rollout fragments;
 - correct vs incorrect truncation bootstrapping.
 
