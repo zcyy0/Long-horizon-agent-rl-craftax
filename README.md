@@ -18,22 +18,7 @@ The recipe graph is used only for analysis. It is not given to the baseline or m
 
 ---
 
-## 2. Current status
-
-Already implemented:
-
-- verified text interface for full Craftax;
-- 11 narrow scripted skills;
-- hierarchical LLM-planner loop;
-- decision ledger and rollout logging;
-- prerequisite-graph analysis;
-- local GPU inference and rollout collection.
-
-The current untrained planner can craft surface tools but does not reliably survive and descend. Therefore, the immediate bottleneck is **trajectory coverage**, not credit assignment.
-
----
-
-## 3. Scope
+## 2. Scope
 
 ### In scope
 
@@ -58,7 +43,7 @@ HCA, COCOA, RUDDER, RRD, and learned world models remain possible follow-up work
 
 ---
 
-## 4. Stage 0: obtain useful trajectory coverage
+## 3. Stage 0: obtain useful trajectory coverage
 
 No credit method can learn that descending is useful if the data never contains a state where descent is attempted or succeeds.
 
