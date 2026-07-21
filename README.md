@@ -22,19 +22,6 @@ observation + ledger
 
 The planner chooses from 11 narrow skills such as `explore`, `mine`, `craft`, `eat`, and `descend`. The controller executes the selected skill for a variable number of primitive game steps. Each planner decision and its outcome is stored in a ledger.
 
-## Current status
-
-Implemented:
-
-- verified text interface for full Craftax;
-- 11-skill scripted controller;
-- hierarchical LLM-planner loop;
-- decision ledger and replayable rollout logging;
-- prerequisite-graph analysis;
-- local GPU inference and rollout collection.
-
-The untrained planner already crafts surface tools, but it does not reliably survive and descend. The next engineering milestone is a shared coverage checkpoint that produces successful and failed descent trajectories.
-
 ## Research question
 
 > Does counterfactual action replacement assign more faithful and useful credit than GAE to long-horizon LLM-planner decisions?
