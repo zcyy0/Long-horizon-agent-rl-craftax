@@ -321,7 +321,7 @@ $$
 The PPO objective is
 
 $$
-L_{\text{PPO}} = \mathbb{E}_t \left[\min\left(\rho_t\hat A_t,\,\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right]
+L_{\text{PPO}} = \mathbb{E}_t \left[\min\left(\rho_t\hat A_t,\,\mathrm{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right]
 $$
 
 Required implementation details:
