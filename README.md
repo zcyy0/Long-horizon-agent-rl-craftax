@@ -166,6 +166,7 @@ The primary causal estimand is the effect of replacing one planner action while 
 
 For history \(h_t\), factual action \(a_t\), alternative-action distribution \(b\), and continuation policy \(\pi\):
 
+$$
 \[
 A_{\text{CF}}^\pi(h_t,a_t)
 =
@@ -174,6 +175,7 @@ A_{\text{CF}}^\pi(h_t,a_t)
 \mathbb{E}_{a' \sim b}
 \mathbb{E}[G \mid do(A_t=a'), h_t, \pi \text{ thereafter}].
 \]
+$$
 
 This is a **policy-continuation causal advantage**. It is not a universal statement that an action was necessary under every possible future policy.
 
@@ -231,7 +233,7 @@ Current measurements indicate:
 
 At planner decision \(t\):
 
-- \(h_t\): observation plus relevant ledger history or recurrent state;
+- $(h_t)$: observation plus relevant ledger history or recurrent state;
 - \(a_t\): structured planner subgoal;
 - \(\tau_t\): number of primitive Craftax actions consumed by the skill;
 - \(r_{t,j}\): primitive reward at internal skill step \(j\);
