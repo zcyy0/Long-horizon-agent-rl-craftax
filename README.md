@@ -166,7 +166,7 @@ The primary causal estimand is the effect of replacing one planner action while 
 For history $h_t$, factual action $a_t$, alternative-action distribution $b$, and continuation policy $\pi$:
 
 $$
-A_{\text{CF}}^\pi(h_t,a_t) = \mathbb{E}[G \mid do(A_t=a_t), h_t, \pi \text{ thereafter}]
+A_{\text{CF}}^\pi(h_t,a_t) = \mathbb{E}[G \mid do(A_t=a_t), h_t, \pi \text{ thereafter}] - \mathbb{E}_{a' \sim b} \mathbb{E}[G \mid do(A_t=a'), h_t, \pi \text{ thereafter}].
 $$
 
 This is a **policy-continuation causal advantage**. It is not a universal statement that an action was necessary under every possible future policy.
@@ -228,7 +228,7 @@ All credit methods use the same architecture and training budget unless a method
 - Output: constrained structured subgoal name and arguments.
 - Optional natural-language reasoning is logged but is not treated as an independent environment action.
 
-### 7.2 Policy-gradient token mask
+### 6.2 Policy-gradient token mask
 
 The primary policy loss is applied to:
 
@@ -240,7 +240,7 @@ Free-form explanation or `think` tokens are excluded from the primary RL loss un
 
 This avoids assigning reward to response verbosity or wording instead of the actual environment decision.
 
-### 7.3 Critic
+### 6.3 Critic
 
 The critic consumes:
 
@@ -261,7 +261,7 @@ Possible implementations:
 
 The initial study should keep the critic architecture fixed across credit methods.
 
-### 7.4 Initialization
+### 6.4 Initialization
 
 A short supervised warm-up may teach:
 
@@ -274,7 +274,7 @@ The same warm-up checkpoint must initialize every RL condition.
 
 Because output syntax is already valid, the warm-up should not inject unnecessary recipe-graph knowledge into the rule-blind study.
 
-### 7.5 Rollout and optimizer controls
+### 6.5 Rollout and optimizer controls
 
 Hold constant:
 
@@ -294,23 +294,16 @@ Hold constant:
 
 ---
 
-## 8. Baselines
+## 7. Baselines
 
-## 8.1 Primary baseline: SMDP PPO + GAE
+## 7.1 Primary baseline: SMDP PPO + GAE
 
 This is the main baseline that every proposed method must beat.
 
 The duration-corrected TD residual is
 
 $$
-\delta_t
-=
-R_t^{\text{macro}}
-+
-\gamma^{\tau_t}
-V_{\phi_{\text{old}}}(h_{t+1})
--
-V_{\phi_{\text{old}}}(h_t).
+\delta_t = R_t^{\text{macro}} + \gamma^{\tau_t} V_{\phi_{\text{old}}}(h_{t+1}) - V_{\phi_{\text{old}}}(h_t).
 $$
 
 Using $\lambda$ per planner transition:
