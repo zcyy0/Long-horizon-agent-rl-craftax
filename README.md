@@ -143,7 +143,7 @@ rather than complete ground-truth causal labels.
 ### 4.3 Event provenance
 
 A stronger mechanistic label records the exact realized chain:
-
+$$
 \[
 \text{planner decision}
 \rightarrow
@@ -155,6 +155,7 @@ A stronger mechanistic label records the exact realized chain:
 \rightarrow
 \text{achievement}.
 \]
+$$
 
 This distinguishes a necessary acquisition from redundant surplus collection.
 
