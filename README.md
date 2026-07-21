@@ -35,31 +35,19 @@ Planner actions have different durations, so the baseline accounts for the numbe
 For macro-action duration $\tau_t$ and internal rewards $r_{t,j}$:
 
 $$
-R_t^{\mathrm{macro}}
-=
-\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
+R_t^{\mathrm{macro}}=\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
 $$
 
 The duration-aware TD residual is
 
 $$
-\delta_t
-=
-R_t^{\mathrm{macro}}
-+
-\gamma^{\tau_t}V(h_{t+1})
--
-V(h_t),
+\delta_t=R_t^{\mathrm{macro}}+\gamma^{\tau_t}V(h_{t+1})-V(h_t),
 $$
 
 and the GAE recursion is
 
 $$
-\hat A_t
-=
-\delta_t
-+
-\gamma^{\tau_t}\lambda\hat A_{t+1}.
+\hat A_t=\delta_t+\gamma^{\tau_t}\lambda\hat A_{t+1}.
 $$
 
 This is the primary RL baseline.
@@ -87,18 +75,13 @@ The first analysis compares GAE advantages with measured branch effects using:
 Exact branching is expensive and unavailable in many real-world settings. A lightweight critic can be trained to predict branch outcomes from the ledger state and a candidate subgoal:
 
 $$
-Q_\psi(h_t,a).
+Q_\psi(h_t,a)
 $$
 
 The learned counterfactual advantage is
 
 $$
-\hat A_\psi(h_t,a_t)
-=
-Q_\psi(h_t,a_t)
--
-\frac{1}{|\mathcal A_t'|}
-\sum_{a'\in\mathcal A_t'}Q_\psi(h_t,a').
+\hat A_\psi(h_t,a_t)=Q_\psi(h_t,a_t)-\frac{1}{|\mathcal A_t'|}\sum_{a'\in\mathcal A_t'}Q_\psi(h_t,a').
 $$
 
 The model is rule-blind: it sees observations, actions, state changes, and rewards, but not the Craftax recipe graph.
