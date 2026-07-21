@@ -309,38 +309,19 @@ $$
 Using $\lambda$ per planner transition:
 
 $$
-\hat A_t^{\text{SMDP-GAE}}
-=
-\delta_t
-+
-\gamma^{\tau_t}\lambda
-\hat A_{t+1}^{\text{SMDP-GAE}}.
+\hat A_t^{\text{SMDP-GAE}} = \delta_t + \gamma^{\tau_t}\lambda \hat A_{t+1}^{\text{SMDP-GAE}}.
 $$
 
 An ablation may instead decay $\lambda$ per primitive step:
 
 $$
-\hat A_t
-=
-\delta_t
-+
-(\gamma\lambda)^{\tau_t}
-\hat A_{t+1}.
+\hat A_t = \delta_t + (\gamma\lambda)^{\tau_t}\hat A_{t+1}.
 $$
 
 The PPO objective is
 
 $$
-L_{\text{PPO}}
-=
-\mathbb{E}_t
-\left[
-\min
-\left(
-\rho_t\hat A_t,\,
-\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t
-\right)
-\right].
+L_{\text{PPO}} = \mathbb{E}_t \left[\min\left(\rho_t\hat A_t,\,\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right]
 $$
 
 Required implementation details:
@@ -355,7 +336,7 @@ Required implementation details:
 
 > **Baseline statement:** The headline comparison is against rule-blind SMDP PPO+GAE with the same policy, critic, rollout data, exploration support, and generated-token budget.
 
-## 8.2 Lower-bound and control baselines
+## 7.2 Lower-bound and control baselines
 
 ### B0 — No-RL planner
 
@@ -382,9 +363,7 @@ Use the known recipe graph to construct a potential $\Phi(h)$.
 For a variable-duration macro action:
 
 $$
-F(h_t,a_t,h_{t+1})
-=
-\gamma^{\tau_t}\Phi(h_{t+1})-\Phi(h_t).
+F(h_t,a_t,h_{t+1})= \gamma^{\tau_t}\Phi(h_{t+1})-\Phi(h_t).
 $$
 
 This is an expert-knowledge control, not the main method.
@@ -395,7 +374,7 @@ Useful for validating that the credit-quality metrics do not report improvement 
 
 ---
 
-## 9. Algorithms ranked by implementation priority
+## 8. Algorithms 
 
 The ranking below balances scientific value, engineering risk, and portfolio value.
 
@@ -411,7 +390,7 @@ The ranking below balances scientific value, engineering risk, and portfolio val
 
 ---
 
-## 10. P0 — SMDP PPO + GAE
+## 9. P0 — SMDP PPO + GAE
 
 ### Objective
 
