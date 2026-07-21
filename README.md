@@ -183,45 +183,7 @@ This project does not initially attempt to:
 - prove that one scalar is the uniquely correct notion of credit.
 
 ---
-
-## 5. Current system and progress
-
-### 5.1 Implemented
-
-- Full Craftax text harness with native-observation verification and fog-of-war.
-- Eleven narrow scripted skills covering exploration, crafting, navigation, survival, and combat.
-- Hierarchical loop in which the LLM chooses one subgoal per turn.
-- Ledger containing observations, decisions, execution status, rewards, achievements, and outcomes.
-- Rollout logging and replay support.
-- Recipe/prerequisite graph and rank-based credit-quality evaluation.
-- Local GPU serving and rollout collection for a Qwen3-4B planner.
-- Self-checking tests for the environment and skill library.
-
-### 5.2 Untrained-planner profile
-
-Current measurements indicate:
-
-- about seven achievements per game on average, with up to ten;
-- reliable progression to stone or iron tools on the surface;
-- no dungeon descent;
-- frequent starvation after surface crafting;
-- approximately 38 LLM decisions expanding to 276 primitive actions;
-- reward on approximately 18% of planner decisions;
-- a mean reward gap of approximately four planner decisions and a maximum observed gap of approximately 28;
-- valid structured output formatting.
-
-### 5.3 Implications
-
-1. The hierarchy and data pipeline are already viable.
-2. GAE must be treated as a serious baseline rather than a weak strawman.
-3. Exploration and credit assignment must be separated experimentally.
-4. The dataset needs successful descent and deeper-floor examples before deep credit can be evaluated.
-5. Delayed-reward stress tests are needed to expose differences between methods.
-6. Correct variable-duration discounting is essential because skills last different numbers of primitive steps.
-
----
-
-## 6. Formal problem formulation
+## 5. Formal problem formulation
 
 At planner decision $t$:
 
@@ -234,9 +196,7 @@ At planner decision $t$:
 The discounted macro reward is
 
 $$
-R_t^{\text{macro}}
-=
-\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
+R_t^{\text{macro}} = \sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
 $$
 
 The planner therefore operates in a semi-Markov decision process.
@@ -244,33 +204,24 @@ The planner therefore operates in a semi-Markov decision process.
 The policy objective is
 
 $$
-J(\theta)
-=
-\mathbb{E}_{\pi_\theta}
-\left[
-\sum_t
-\gamma^{\sum_{i<t}\tau_i}
-R_t^{\text{macro}}
-\right].
+J(\theta) = \mathbb{E}_{\pi_\theta} \left[\sum_t \gamma^{\sum_{i<t}\tau_i} R_t^{\text{macro}} \right].
 $$
 
 The critic estimates
 
 $$
-V_\phi(h_t)
-\approx
-\mathbb{E}[G_t \mid h_t].
+V_\phi(h_t) \approx \mathbb{E}[G_t \mid h_t].
 $$
 
 The rule-blind learner receives observations, history, actions, state changes, durations, and rewards, but not the recipe graph.
 
 ---
 
-## 7. Shared agent and training architecture
+## 6. Shared agent and training architecture
 
 All credit methods use the same architecture and training budget unless a method intrinsically requires an auxiliary model.
 
-### 7.1 Planner policy
+### 6.1 Planner policy
 
 - Base model: Qwen3-4B or another fixed open model.
 - Fine-tuning: LoRA or equivalent parameter-efficient adaptation.
