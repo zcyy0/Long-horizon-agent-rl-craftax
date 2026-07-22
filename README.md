@@ -112,19 +112,11 @@ Each skill can consume a different number of primitive steps. The PPO baseline t
 For skill duration $\tau_t$, internal primitive rewards $r_{t,j}$, and critic $V(h_t)$:
 
 $$
-R_t^{\mathrm{macro}}
-=
-\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j},
+R_t^{\mathrm{macro}}=\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j},
 $$
 
 $$
-\delta_t
-=
-R_t^{\mathrm{macro}}
-+
-\gamma^{\tau_t}V(h_{t+1})
--
-V(h_t).
+\delta_t=R_t^{\mathrm{macro}}+\gamma^{\tau_t}V(h_{t+1})-V(h_t).
 $$
 
 The baseline computes GAE over the planner-level trajectory and updates the LLM policy with PPO.
@@ -144,14 +136,7 @@ At each planner decision, the LLM proposes a small set of diverse valid subgoals
 The first version performs one-step candidate reranking:
 
 $$
-a_t
-=
-\arg\max_{a\in\mathcal A_t}
-\left(
-\widehat Q_{\mathrm{native}}(h_t,a)
--
-\kappa\widehat\sigma(h_t,a)
-\right).
+a_t=\arg\max_{a\in\mathcal A_t}\left(\widehat Q_{\mathrm{native}}(h_t,a)-\kappa\widehat\sigma(h_t,a)\right).
 $$
 
 The primary score optimizes predicted native return while penalizing uncertainty. Survival, depth, and achievement predictions are auxiliary targets and diagnostics.
@@ -197,25 +182,13 @@ Phase II begins only after Phase I produces trajectories with enough successful 
 At selected history state $h_t$, execute alternative actions from the same snapshot and continue with a frozen continuation policy $\pi_c$ for horizon $H$:
 
 $$
-Q_H^{\mathrm{branch}}(h_t,a)
-=
-\mathbb E
-\left[
-G_{t,H}
-\mid
-\operatorname{do}(A_t=a),\pi_c
-\right].
+Q_H^{\mathrm{branch}}(h_t,a)=\mathbb E\left[G_{t,H}\mid\operatorname{do}(A_t=a),\pi_c\right].
 $$
 
 A learned critic $Q_\psi(h,a)$ is trained to predict these branch outcomes. Its centered action credit is
 
 $$
-A_t^{\mathrm{CF}}
-=
-Q_\psi(h_t,a_t)
--
-\mathbb E_{a'\sim b(\cdot\mid h_t)}
-\left[Q_\psi(h_t,a')\right],
+A_t^{\mathrm{CF}}=Q_\psi(h_t,a_t)-\mathbb E_{a'\sim b(\cdot\mid h_t)}\left[Q_\psi(h_t,a')\right],
 $$
 
 where $b$ is a documented alternative-action baseline over valid candidates.
@@ -348,17 +321,4 @@ Phase I succeeds if it shows a clear, reproducible capability gain such as:
 - a useful failure analysis showing when the learned model should not be trusted.
 
 Phase II succeeds if the branch-supervised critic predicts held-out action-replacement effects and either improves long-horizon policy learning or clearly identifies conditions under which standard GAE is already sufficient.
-
-The complete research-engineering story is:
-
-```text
-instrument a long-horizon environment
-→ implement a correct model-free RL baseline
-→ learn reusable action-outcome structure
-→ plan and adapt under uncertainty
-→ collect deeper and more diverse trajectories
-→ learn intervention-grounded delayed credit
-→ test whether better credit improves policy learning
-```
-
 Detailed engineering decisions, schemas, tests, budget gates, and the Phase II extension contract are documented in `docs/CRAFTAX_INTERNAL_IMPLEMENTATION_PLAN.md`.
