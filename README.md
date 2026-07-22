@@ -3,8 +3,6 @@
 > **Current focus:** sample-efficient planning and adaptation with semi-Markov PPO+GAE and a structured action-outcome model.  
 > **Planned extension:** long-horizon counterfactual credit assignment once the agent can reliably produce deeper, longer trajectories.
 
-> **Status:** the Craftax environment, 11-skill controller, hierarchical LLM loop, trajectory ledger, replay tooling, and GPU rollout pipeline are implemented. The learning experiments below are planned; this document does not claim completed training results.
-
 ## Project overview
 
 This project studies how a hierarchical LLM agent can learn to act over long horizons in Craftax while using interaction data efficiently.
