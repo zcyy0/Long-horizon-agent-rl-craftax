@@ -182,7 +182,7 @@ Phase II begins only after Phase I produces trajectories with enough successful 
 At selected history state $h_t$, execute alternative actions from the same snapshot and continue with a frozen continuation policy $\pi_c$ for horizon $H$:
 
 $$
-Q_H^{\mathrm{branch}}(h_t,a)=\mathbb E\left[G_{t,H}\mid\operatorname{do}(A_t=a),\pi_c\right].
+Q_H^{\mathrm{branch}}(h_t,a)=\mathbb E\left[G_{t,H}\mid\mathrs{do}(A_t=a),\pi_c\right].
 $$
 
 A learned critic $Q_\psi(h,a)$ is trained to predict these branch outcomes. Its centered action credit is
