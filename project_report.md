@@ -5,25 +5,6 @@ to be read on its own — no other docs required.
 
 ---
 
-## TL;DR
-
-I'm studying **long-horizon credit assignment for LLM agents**: when an AI plays a game
-that takes ~100,000 steps and rewards are sparse, which decisions actually mattered? My
-approach is a **hierarchical agent** — a frozen LLM proposes short-term subgoals, a scripted
-controller executes them, and a small **learned value model reranks** the LLM's proposals to
-pick better ones.
-
-The headline result: the reranker worked but was capped by *what the LLM chose to propose*,
-so I **distilled the value model's preferences back into the LLM**. On held-out game worlds
-that roughly **doubled the agent's reward** (2.4 → 4.6) and **doubled how often it proposes
-the best action** (recall 0.37 → 0.77). A model-free reinforcement-learning baseline (PPO),
-the point of comparison for whether this is more *sample-efficient*, is in progress.
-
-*(Scope note: current numbers are a 30-world, single-seed pilot — directional, not yet
-significance-tested. I flag this at each result and am scaling it up.)*
-
----
-
 ## The problem
 
 [**Craftax**](https://github.com/MichaelTMatthews/Craftax) is an open-source RL benchmark: a
