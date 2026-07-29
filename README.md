@@ -1,4 +1,4 @@
-# craftax-rl — long-horizon RL for hierarchical LLM agents on full Craftax
+# Long-horizon RL for Hierarchical LLM agents on Full Craftax
 
 A research program on **long-horizon credit assignment**: can an agent learn to execute
 plans whose payoff arrives hundreds of primitive steps later — and what should the
