@@ -1,372 +1,382 @@
 # Project report: LLM priors vs. learned world models on Craftax
-
-*A controlled study of four agent systems under matched interaction budgets — what
-each one learns, what each one cannot learn, and what it takes to measure the
-difference honestly.*
-
 ---
 
 ## 1. Motivation
 
-Two schools of thought dominate current agent research:
+There are two common answers to "how should an agent get good at an environment?"
 
-1. **The prior school**: take a pretrained LLM, give it tools and an action interface,
-   and its internet-scale knowledge substitutes for environment experience. Finetune
-   with RL if you want more.
-2. **The learning school**: model the environment from data, plan against the model,
-   and let interaction — not pretraining — be the source of competence.
+1. **Start from a pretrained LLM.** Its general knowledge stands in for experience.
+   Add RL fine-tuning if you want more.
+2. **Learn a model of the environment.** Predict what actions do, plan against those
+   predictions, and let interaction be the source of competence.
 
-This project puts both schools in one harness on one benchmark under one budget and asks a narrow,
-decidable question:
+These two approaches are usually compared across different papers, with different
+budgets, different action spaces, and different evaluation setups. That makes the
+comparisons hard to trust. This project puts both approaches in the same harness, on
+the same benchmark, with the same budget, and asks one narrow question:
 
-> **Given exactly 3,200 environment decisions of training interaction, does a
-> world-model planner trained from zeros beat (a) a frozen pretrained LLM planner and
-> (b) the same LLM finetuned with PPO on those 3,200 decisions?**
+> **Given exactly 3,200 environment decisions to learn from, does a world model
+> trained from scratch beat a frozen pretrained LLM planner? And does it beat the
+> same LLM fine-tuned with PPO on those 3,200 decisions?**
 
-The testbed is **Craftax** (full version): a Crafter-descendant with a deep tech tree
-(wood → stone → iron → diamond), survival meters (food, water, energy, health), day/night
-cycles, hostile mobs, and a multi-floor dungeon. It is hard enough that neither school
-trivially wins, and it has a property that turned out to matter more than expected:
-part of its mechanics (the tech tree) is Minecraft folklore an LLM already knows, and
-part (the thirst meter, dungeon mob density) is not.
+The testbed is **Craftax** (the full version). It is a 2D survival game in the
+Minecraft family: a tech tree that runs from wood to stone to iron to diamond,
+hunger/thirst/energy/health meters, day and night, hostile monsters, and a dungeon
+with nine floors. Two properties make it a good testbed. It is hard enough that
+neither approach wins trivially. And, in a way that turned out to matter a lot, *part*
+of the game matches Minecraft folklore an LLM already knows (the tech tree), and part
+of it does not (the thirst meter, the dungeon).
 
-This comparison is stage one of a larger program (see the README's roadmap): the same
-harness — grounded menus, semi-MDP credit assignment, and exact branch-and-replay
-snapshotting — is built to carry the study to full nine-floor training and evaluation
-and to counterfactual long-horizon credit assignment beyond GAE, once the agents
-produce trajectories deep enough to need it. The floor-1 transfer and few-shot results
-below (§3.4, §3.6) are the first steps down that ladder.
+This comparison is stage one of a larger program (the README has the roadmap). The
+same infrastructure is built to eventually support training and evaluation across all
+nine floors, and counterfactual credit assignment over long horizons — "which decision
+two hundred steps ago made this diamond possible?" The floor-1 studies in sections 3.4
+and 3.6 are the first steps in that direction.
 
 The four systems:
 
-| arm | policy | training signal | compute |
+| arm | what it is | trained on | compute |
 |---|---|---|---|
-| FROZEN | Qwen3-4B ranks a menu of grounded actions | none | inference only |
-| PPO | same + LoRA, duration-aware PPO+GAE | 3,200 decisions | ~376M tokens, 3.2 GPU-h |
-| TEACHER | ensemble world model + value net, no LLM anywhere | 3,200 decisions, from zeros | ~0 GPU (CPU minutes) |
-| DISTILL | TEACHER's decisions distilled into the LLM | inherits TEACHER's 3,200 | designed, not yet run |
+| FROZEN | Qwen3-4B picks actions from a menu | nothing | inference only |
+| PPO | same LLM, fine-tuned with PPO+GAE | 3,200 decisions | ~376M tokens, 3.2 GPU-h |
+| TEACHER | small world model + value net, no LLM at all | 3,200 decisions, from scratch | minutes of CPU |
+| DISTILL | the teacher's decisions taught back to the LLM | inherits the teacher's data | running now |
 
 ---
 
 ## 2. Design choices, and why
 
-### 2.1 One grounded action menu for every system
+### 2.1 Every system picks from the same menu
 
-Every system chooses from the **same menu of macro-actions** (up to 20 per state),
-built by a single constructor from the game state: `go_to(tree)`, `craft(stone_pickaxe)`,
-`fight(zombie)`, `drink_water`, `descend`, `open_chest`, … A scripted executor carries
-out the chosen subgoal over multiple game steps.
+At each decision point, the harness builds a menu of up to 20 macro-actions from the
+game state — things like `go_to(tree)`, `craft(stone_pickaxe)`, `fight(zombie)`,
+`drink_water`, `descend`, `open_chest`. The system under test picks one. A scripted
+controller then carries it out over however many game steps it takes.
 
-The invariant is **"offered ⟹ doable"**: the constructor offers an action only when
-its preconditions hold — checked by the *same predicate functions the executor uses*
-(one rule, one function). Sleep is not offered at full energy; craft is not offered
-without materials in reach; placing a table is not offered where no tile accepts it.
+One rule governs the menu: **if an action is offered, it can actually be done.** Sleep
+is not offered when energy is full. Craft is not offered without materials. The menu
+constructor checks these conditions using the same code the controller uses, so the
+two can never disagree.
 
-Why this matters more than it sounds: an earlier version offered `drink`/`sleep`
-unconditionally, and the world-model planner — which, unlike the LLM, has no prior
-telling it these are pointless at full meters — spent **61.4% of its entire training
-budget** on zero-step no-ops. The headline comparison was garbage until the action
-space was honest. Every action's gating now has a regression test (a gate script that
-fails if any offered action can be a no-op), because the menu *is* the experiment: a
-systematically different action space per system would make every downstream number
-uninterpretable.
+This sounds like a detail. It nearly sank the project. An early version offered
+`drink` and `sleep` unconditionally. The LLM ignored them (its prior "knows" they're
+usually pointless), but the world-model planner had no such instinct and spent **61%
+of its entire training budget** on actions that did nothing. Every comparison made
+with that menu was garbage. The menu is now covered by regression tests, because the
+menu *is* the experiment: if different systems saw different action spaces, none of
+the downstream numbers would mean anything.
 
-### 2.2 Semi-MDP credit assignment
+### 2.2 Credit assignment that respects time
 
-Macro-actions take wildly different numbers of game steps (a `fight` may take 3, a
-`go_to` 40). Discounting by decision count would systematically favor slow actions.
-Returns, advantages (GAE), and the planner's Q-values all discount by **elapsed game
-time**: Q = r̂ + γ^max(τ,1) · (1 − p̂_death) · V(ŝ′), with the τ floor shared by every
-consumer through one function. The RL core is unit-tested against hand-computed
-references.
+Macro-actions take very different amounts of game time — a `fight` might take 3 steps,
+a long `go_to` forty. If you discount rewards per *decision*, slow actions get an
+unfair advantage. So everything here — returns, advantages, the planner's Q-values —
+discounts by **elapsed game time** instead. This "semi-Markov" accounting is
+implemented once, shared by every consumer, and unit-tested against hand-computed
+examples.
 
-### 2.3 The world model: structure where the game has laws
+### 2.3 A world model with structure where the game has rules
 
-The teacher's model is deliberately not a monolith:
+The teacher's world model is deliberately not one big black box:
 
-- **Typed prediction heads.** Each of 132 state features is typed (continuous / count /
-  binary / categorical) and gets a matching head — the model cannot look accurate on
-  average while being useless per field.
-- **Compositional reward head.** Craftax's reward is almost entirely *one-time
-  achievement unlocks*. The head predicts per-achievement unlock probabilities and
-  assembles reward as Σ p̂(unlock_k)·coef_k, with the game's coefficients as constants.
-  Crucially, the achievement *set* is input (67 bits) and spent achievements are
-  **hard-masked to zero** — "already unlocked ⟹ zero reward" is a law of the game, so
-  it lives in the architecture, not in the training data's ability to teach it. Before
-  this, the planner farmed already-spent achievements 471 times per 60 worlds, because
-  a scalar head fed an achievement *count* was mathematically unable to represent
-  exhaustion.
-- **Empirical-Bayes shrinkage** (the decisive repair — §3.2): per-achievement
-  probabilities are blended with a pooled any-unlock head by wₖ = nₖ/(nₖ+10), so
-  achievements with ~5 training examples borrow strength from the pool, and the prior
-  retires itself as evidence accumulates.
-- **Ensemble + two decision rules.** Three bootstrap-resampled members. *Collection*
-  uses Thompson sampling (one member per episode — coherent optimism, so a member that
-  believes in a plan executes the whole plan); *deployment* uses the pessimistic LCB
-  (μ − 0.5σ). Evaluating under the exploration rule would report the exploration bonus
-  as skill.
+- **Typed prediction heads.** Each of the 132 state features is typed (a count, a
+  binary flag, a category, a continuous value) and gets a matching prediction head.
+  The model can't look accurate on average while being useless on the fields that
+  matter.
+- **A reward head that mirrors how the game actually pays.** Almost all reward in
+  Craftax comes from one-time achievement unlocks. So the reward head predicts, per
+  achievement, the probability of unlocking it, and multiplies by the game's own
+  reward coefficients. Already-unlocked achievements are **forced to predict zero** —
+  that's a rule of the game, so it is built into the architecture rather than left
+  for training data to teach. Before this existed, the planner "farmed" spent
+  achievements 471 times per 60 worlds, chasing reward the game would never pay
+  again.
+- **Shrinkage for rare events.** With only 3,200 decisions, many achievements have a
+  handful of training examples. Their predictions are blended with a pooled
+  "any-achievement" estimate, weighted by how much data each one has. Rare events
+  borrow strength from the pool; as real evidence accumulates, the pool's influence
+  fades away on its own. Section 3.2 explains why this one change was worth +3.3
+  reward.
+- **An ensemble, used two different ways.** Three copies of the model are trained on
+  bootstrap resamples of the data. During *data collection*, one copy is sampled per
+  episode and trusted fully — so a copy that believes in a plan executes the whole
+  plan (this is Thompson sampling, and it produces coherent exploration rather than
+  random jitter). During *evaluation*, the planner scores actions by the mean minus
+  half the spread — a pessimistic rule. Evaluating with the exploration rule would
+  count the exploration bonus as skill.
 
-### 2.4 The fairness contract
+### 2.4 What is held equal, and what is not
 
-Held constant across arms, enforced by executable checks rather than intentions:
-budget (3,200 decisions, audited to the unit from each run's own transition files —
-the ledger deliberately isn't trusted for per-run identity), action space
-(constructor version stamped into every data file; version mismatch is a **fatal**
-preflight error), worlds (paired seeds), evaluator (one script computes every system's
-metrics), exploration floor (ε=0.05 during collection for both learned arms, never
-during eval).
+Held equal across all systems, enforced by scripts rather than good intentions:
 
-Deliberately *not* matched, and reported instead: mechanism and compute. The LLM arms
-inherit an internet-scale prior; the teacher starts from zeros. That asymmetry is the
-subject of the study, not a confound in it.
+- the interaction budget (3,200 decisions, counted from each run's own log files),
+- the action menu (a version number is stamped into every data file, and comparing
+  across versions is a hard error),
+- the evaluation worlds (the same seeds, paired),
+- the evaluation code (one script computes every system's metrics),
+- the exploration floor (both learning systems get ε=0.05 random-ish actions during
+  collection, never during evaluation).
+
+Deliberately *not* equal: the starting knowledge and the compute. The LLM arms begin
+with an internet-scale prior and spend GPU-hours; the teacher begins with random
+weights and trains in CPU minutes. That asymmetry is not a flaw in the study — it is
+the subject of the study.
 
 ### 2.5 Measurement discipline
 
-- **Power before verdicts.** Early evals used n=10 worlds; four separate "trends"
-  from that era (including a published-grade "PPO +1.36, p=0.002") died at n=60. The
-  dev instrument is 60 paired worlds, MDE ≈ 0.9–1.5 reward, paired bootstrap with
-  10,000 resamples; every verdict is significance-gated, and "n.s." is written "n.s.",
-  not narrated as a trend.
-- **Pre-registration.** Readouts are written down before each run (in the driver
-  script's header, where they cannot be quietly edited afterward). The negative
-  results in §3.2 were reported because the pre-registered readouts forced them into
-  view.
-- **Gates before compute.** Twelve-plus gate scripts (menu grounding, reward-head
-  exactness, PPO gradient-path correctness, evaluator consistency, model-exploitation
-  detection) must pass before a run spends budget. The PPO gradient gate is built
-  around a *deliberately broken* implementation that produces perfect scores with
-  silently wrong gradients, and asserts the real path is measurably different.
-- **A held-out test set that has never been touched.** All results below are dev-set;
-  80 test worlds (seeds 100–179) stay pristine until the roster is final and are spent
-  once.
+Four habits did a lot of work here:
+
+- **Check the statistical power first.** Early evaluations used 10 worlds. Four
+  separate "findings" from that era — including one at p=0.002 — disappeared when the
+  evaluation grew to 60 worlds. Every comparison now reports the smallest effect it
+  could have detected, and anything not significant is called not significant.
+- **Write down predictions before running.** Each experiment's expected readouts are
+  recorded in the driver script's header before it runs. Two of the most useful
+  results in this report are negative ones that pre-registration forced into view.
+- **Gate before spending.** More than a dozen check scripts have to pass before any
+  run spends real budget: menu correctness, reward-head exactness, gradient-path
+  correctness, evaluator consistency. The gradient check is built around a
+  deliberately broken implementation that produces perfect-looking scores with wrong
+  gradients — the gate proves the real path differs from it.
+- **Keep a clean test set.** Everything in this report uses development worlds
+  (seeds 40–99). Eighty test worlds are reserved and have never been touched. They
+  will be spent once, at the end.
 
 ---
 
 ## 3. Results
 
-### 3.1 The headline: the from-scratch planner wins its training distribution
+### 3.1 The headline: the from-scratch planner wins on its home turf
 
-60 paired dev worlds, matched budgets, one evaluator:
+Sixty paired development worlds, matched budgets, one evaluator:
 
-| system | reward | achievements gained | survival | vs FROZEN (paired) |
+| system | reward | achievements | survival | vs FROZEN (paired) |
 |---|---:|---:|---:|---|
-| **TEACHER (v5c)** | **10.61** | **10.6** | **90%** | **+3.32, p<0.001** |
-| PPO (ckpt4) | 7.66 | 8.5 | 52% | +0.36, p=0.22 n.s. |
+| **TEACHER** | **10.61** | **10.6** | **90%** | **+3.32, p<0.001** |
+| PPO | 7.66 | 8.5 | 52% | +0.36, p=0.22 (not significant) |
 | FROZEN | 7.29 | 8.1 | 48% | — |
 
-Two results in one table. First, a small structured world model trained from zeros on
-3,200 decisions — no language prior, no GPU — beats a 4-billion-parameter pretrained
-planner on reward, achievements, and survival simultaneously. Second, **PPO on the
-same budget is statistically indistinguishable from not training at all**: the
-earlier-design "+1.36, p=0.002" PPO effect does not reproduce under the corrected
-action space and the powered instrument (new CI [−0.23, +0.92]).
+Two results live in this table. First: a small world model trained from random
+weights on 3,200 decisions — no language prior, essentially no GPU — beats a
+4-billion-parameter pretrained planner on reward, achievements, and survival at the
+same time. Second: **PPO on this budget is statistically indistinguishable from not
+training at all.** An earlier version of this project reported a significant PPO gain;
+under the corrected action menu and the properly powered evaluation, that effect does
+not reproduce.
 
-### 3.2 How the teacher got there: a ladder of controlled interventions
+### 3.2 How the teacher got there: one change at a time
 
-No single trick produced 10.61. The ladder, each rung a one-variable change measured
-on the same 60 worlds:
+The 10.61 did not come from one trick. It came from a ladder of single-variable
+changes, each measured on the same 60 worlds:
 
 | arm | change | reward |
 |---|---|---:|
-| ε=0 | honest menu, blind scalar reward head | 5.75 (significantly *worse* than FROZEN) |
-| **+ ε=0.05 floor** | mirror the exploration floor PPO already had | **9.41** |
-| + honest reward head | per-achievement compositional head, hard masking | 7.35 (**−2.06**) |
-| + value-iteration targets | fitted-VI backups for V | 7.50 (Δ n.s. — score-neutral) |
-| **+ shrinkage** | empirical-Bayes blend, pooled prior, self-retiring | **10.61** |
+| baseline | honest menu, naive reward head | 5.75 (significantly *worse* than FROZEN) |
+| **+ exploration floor** | give the teacher the same ε=0.05 PPO had | **9.41** |
+| + honest reward head | per-achievement predictions, spent ones masked to zero | 7.35 (a 2-point *drop*) |
+| + value-iteration targets | fancier value-network training | 7.50 (no significant change) |
+| **+ shrinkage** | blend rare-event predictions with a pooled estimate | **10.61** |
 
-Three mechanisms, each verified causally:
+Three lessons, each verified rather than assumed:
 
-**Exploration was the binding constraint (+3.66).** Not model quality, not credit
-assignment — a 5% action floor. Chain events (mine coal, smelt, fight) rose 2–7× in
-the training stream, and the model then valued them correctly on its own. The lesson
-generalizes: before diagnosing a learner, check what its data ever contained.
+**Exploration was the bottleneck, not the model.** A 5% floor of forced variety was
+worth +3.7 reward on its own. With it, the training data finally contained coal
+mining, smelting, and fighting (2–7× more of each), and the model priced them
+correctly once it had seen them. Before diagnosing a learner, check what its data
+ever contained.
 
-**An honest model made things worse (−2.06), and understanding why mattered.** The
-old achievement-blind head averaged reward credit over everything — wrong, but a
-smooth accidental *breadth prior*. The honest per-achievement head is sharp where it
-has data and silent where it does not: coal had ~5 training examples, so predicted
-coal value was ~0, so the planner never mined coal, so coal stayed at ~5 examples — a
-self-sealing error loop, made worse because a planner *chooses* its own training
-distribution (endogenous data). At 3,200 decisions, **wrong-but-smooth beat
-right-but-starved**. This is a bias-variance statement about small-data model-based
-RL, and it reproduced across two independent arms.
+**Making the reward model *more correct* made the agent *worse* — and the reason
+matters.** The old, naive head spread reward credit over everything. Wrong, but
+smooth: it acted as an accidental "try things broadly" prior. The honest
+per-achievement head is sharp where it has data and silent where it does not. Coal
+had about five training examples, so predicted coal value was near zero, so the
+planner never mined coal, so coal stayed at five examples. The error seals itself in,
+because a planner chooses its own future training data. With this little data,
+wrong-but-smooth beat right-but-starved by two full points. That is a bias-variance
+tradeoff showing up at the system level.
 
-**Making the accidental prior explicit beat both (+3.27 over the honest head).**
-Shrinkage keeps the honest head's exactness (spent achievements predict exactly zero,
-by construction) while restoring breadth through a pooled prior (furnace: 30 worlds
-vs 2; zombie: 29 vs 1) — and unlike the accidental version, it *retires itself* as
-per-achievement evidence accumulates. Bonus: the compositional structure crafts stone
-pickaxes with **zero training examples** of doing so — cross-tier template
-generalization the monolithic head cannot express.
+**The fix was to make the accidental prior explicit.** Shrinkage keeps the honest
+head's exactness (spent achievements still predict exactly zero) while restoring the
+breadth the naive head had provided by accident — furnaces built in 30 worlds instead
+of 2, zombies fought in 29 instead of 1. And unlike the accident, it fades out
+gracefully as real evidence arrives. A bonus from the compositional structure: the
+model crafts stone pickaxes correctly with *zero* training examples of doing so,
+generalizing the pattern from other craft actions.
 
 ### 3.3 The systems know different things
 
-Behavioral fingerprints on the same worlds:
-
 | behavior | FROZEN / PPO | TEACHER |
 |---|---|---|
-| deep chain (stone pickaxe → iron) | **25–37/60 stone pick, 14/60 iron** | 6/60 best, iron 0/60 |
-| drinking (Craftax-specific mechanic) | ~0 drinks; 29+26 dehydration deaths | learned; 90% survival |
-| easy-tier breadth | partial | **best** (10.6 achievements) |
+| the deep chain (stone pickaxe → iron) | yes — iron in 14 of 60 worlds | never (0 of 60) |
+| drinking (a mechanic Minecraft lacks) | almost never; 55 dehydration deaths | learned it; 90% survival |
+| breadth on the easy tier | partial | best |
 
-The LLM planners walk the wood→stone→iron chain because *Minecraft folklore contains
-it* — and die of thirst because Minecraft has no thirst meter. 3,200 decisions of PPO
-fixed neither the missing mechanic nor anything else measurable. The from-scratch
-teacher learned the meters this world actually has, and never discovered iron because
-at this budget its exploration never got there — the depth is proven feasible within
-40-turn episodes (the LLMs do it), so this is a pure discovery gap, and it triggered
-the pre-registered next intervention (randomized-prior exploration).
+The LLM planners walk the wood → stone → iron chain out of the box, because Minecraft
+folklore contains that chain. The same planners die of thirst, because Minecraft has
+no thirst meter — and 3,200 decisions of PPO did not patch that hole in the prior.
+The teacher learned the meters this world actually has and survives 90% of episodes,
+but never discovered iron: at this budget, its exploration never completed the long
+chain to reach ore. The LLMs prove the chain fits inside a 40-turn episode, so the
+teacher's gap is purely about discovery, not capability. That fired the pre-registered
+trigger for the next exploration upgrade (randomized priors).
 
-### 3.4 One floor down: the transfer study, and a symmetry
+### 3.4 One floor down: where knowledge comes from decides where you die
 
-All three systems were evaluated from 40 banked floor-1 entry states (a mob-dense
-dungeon; near-zero training exposure, labelled per arm: TEACHER 3 lifetime decisions,
-PPO 13, FROZEN 0):
+All three systems were then dropped into the dungeon: 40 saved floor-1 entry states,
+essentially untrained territory for everyone (the teacher had seen 3 floor-1
+decisions in its life, PPO 13, FROZEN none).
 
-| system | reward | ach gained | survived |
+| system | reward | achievements | survived |
 |---|---:|---:|---:|
 | TEACHER | 4.81 | **3.20** | 18/40 |
 | PPO | 4.93 | 2.43 | 28/40 |
 | FROZEN | 3.98 | 1.93 | **29/40** |
 
-No pairwise reward difference is significant at n=40 (MDE ≈ 2) — reported as
-descriptive. The finding that transfers is the **death-mechanism symmetry**:
+No reward difference here is statistically significant at 40 worlds, so treat the
+ranking as descriptive. The finding that matters is a symmetry in *how they die*:
 
-> On the surface, the mechanic missing from the LLM's prior (thirst) kills the LLMs;
-> the teacher's learned upkeep saves it. On floor 1 the roles invert *exactly*: the
-> habit the teacher learned on the surface — sleep at low energy, safe above ground,
-> 219 naps at 90% survival — is lethal in a dungeon where sleeping multiplies incoming
-> damage. 13 of its 22 floor-1 deaths have `sleep` among the final actions. FROZEN,
-> whose prior lacks the sleep mechanic entirely, cannot make that mistake and
-> out-survives it 29/40 vs 18/40 (fight rates are equal — it is not aggression).
+> On the surface, the LLMs die of thirst — the one mechanic their prior lacks. The
+> teacher's learned upkeep saves it. One floor down, the roles flip exactly. The
+> habit the teacher learned on the surface — sleep when energy is low, which is safe
+> up there — is lethal in a dungeon full of monsters, where sleeping multiplies the
+> damage you take. Thirteen of its 22 floor-1 deaths have `sleep` among the last few
+> actions. FROZEN's prior doesn't have the sleep habit at all, so it cannot make that
+> mistake, and it survives the most.
 >
-> **Each system dies precisely where its knowledge's origin diverges from the world
-> it is standing in** — the prior's game for the LLMs, the training floor for the
-> learner.
+> **Each system dies exactly where its knowledge came from somewhere else** — the
+> LLMs where their prior's game differs from this one, the teacher where its training
+> floor differs from this floor.
 
-This reframes "which system is better?" as "which *knowledge source* fails where?",
-and it set up two follow-ups with pre-registered readouts: few-shot floor-1
-adaptation — does 400 decisions of dungeon experience reprice the teacher's sleep
-habit faster than it patches the LLM's gaps? — answered in §3.6, and distillation —
-can the LLM's depth prior and the teacher's learned upkeep be *unioned*? — designed
-in [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md), whose central risk (importing
-the teacher's lethal sleep habit along with its upkeep) is exactly the symmetry
-finding applied to training data.
+That reframes the question from "which system is better?" to "which knowledge source
+fails where?" — and it set up the two experiments that follow. Few-shot adaptation:
+give each system a little dungeon experience and see who fixes their blind spot
+faster (section 3.6). Distillation: try to combine the LLM's deep knowledge with the
+teacher's learned survival into one policy (running now).
 
-### 3.5 The null results, reported as such
+### 3.5 The negative results, stated plainly
 
-- PPO ≈ FROZEN at n=60 (above). Under this action interface — where the menu already
-  does the affordance work and the policy only ranks ~12 grounded options — 3,200
-  decisions of duration-aware PPO produced no detectable improvement. The gradient
-  path itself is gate-verified correct; the null is about signal, not machinery.
-- Fitted value-iteration targets for the teacher's V: score-neutral at n=60
-  (Δ −0.16 n.s.), and behaviorally it *suppressed* upkeep — a reminder that a
-  max-over-model-Q backup imports the model's optimism into exactly the states the
-  data least supports (the deadly triad, observed in vivo, caught by a pre-registered
-  exploitation auditor rather than by intuition).
+- **PPO ≈ FROZEN.** With the menu already handling "what is possible" and the policy
+  just ranking about 12 grounded options, 3,200 decisions of PPO produced no
+  detectable improvement. The training machinery itself is verified correct by the
+  gates; the problem is signal, not bugs.
+- **Value-iteration targets didn't help.** A more sophisticated way of training the
+  value network (backing up the best model-predicted action instead of what actually
+  happened) changed the score by nothing, and behaviorally it *suppressed* the
+  survival habits. Taking a max over model predictions imports the model's optimism
+  exactly where data is thinnest — a textbook risk, observed live, caught by a
+  pre-registered check.
 
-### 3.6 Few-shot adaptation: the same 400 decisions, very different returns
+### 3.6 Few-shot adaptation: same 400 decisions, wildly different returns
 
-Both learned systems then received B=400 extra floor-1 decisions (from the same
-snapshot bank the eval uses) followed by their own standard update — a full model
-refit for the teacher, one more KL-bounded LoRA step for PPO; FROZEN is the B=0
-control. Paired on the same 40 snapshots (these arms have spent 3,600 total decisions
-and are labelled B=400 — never mixed into the matched-3,200 tables):
+Both learning systems then got 400 extra decisions of dungeon experience, drawn from
+the same saved entry states the evaluation uses, followed by their own standard
+update — a full model refit for the teacher, one more PPO step for the LLM. FROZEN,
+which has no update mechanism, is the control. (These arms have now used 3,600 total
+decisions, so they are labeled separately and never mixed into the matched-budget
+tables above.)
 
-| arm | reward | ach gained | survived | vs its own B=0 |
+| arm | reward | achievements | survived | change vs its own baseline |
 |---|---:|---:|---:|---|
-| **Teacher + 400** | **13.46** | **8.45** | 32/40 | **+8.65, p<0.001** (all metrics) |
-| PPO + 400 | 5.60 | 2.85 | **33/40** | +0.68 n.s. (survival +12.5pts, p=0.007) |
-| FROZEN (B=0) | 3.98 | 1.93 | 29/40 | — |
+| **Teacher + 400** | **13.46** | **8.45** | 32/40 | **+8.65, p<0.001, every metric** |
+| PPO + 400 | 5.60 | 2.85 | **33/40** | +0.68, not significant |
+| FROZEN (control) | 3.98 | 1.93 | 29/40 | — |
 
-The pre-registered mechanism readout confirmed: the teacher's deaths fell 22→8 and
-its sleep-death fraction from 59% to 38% — roughly forty sleep-outcome examples
-repriced the lethal habit. More striking, with ore actually exposed on floor 1 the
-from-scratch learner acquired the whole dungeon economy in 400 decisions — coal,
-furnaces, potions (an action it had never once taken), bows, **iron in 7/40 and
-diamond in 3/40 worlds** — with zero forgetting on the surface (paired surface
-subset: 9.94 vs 9.24). So the surface iron gap of §3.3 was about the long chain to
-*reach* ore, not about valuing it — an exploration/credit-assignment problem, not a
-valuation one, which is what roadmap stages 4–5 attack.
+The teacher nearly tripled its dungeon reward. The pre-registered prediction — that
+its death-model would re-price the sleep habit — came true: deaths fell from 22 to 8.
+And it went much further than fixing one habit. With ore actually exposed on floor 1,
+the teacher picked up the whole dungeon economy in 400 decisions: coal, furnaces,
+torches, bows, potions (an action it had never taken even once), **iron in 7 worlds
+and diamond in 3** — with zero forgetting of its surface skills. Remember that iron
+was the thing it could *never* discover on the surface. So the surface gap was about
+the long chain needed to *reach* ore, not about valuing it.
 
-The LLM arm, updated through one trust-region-bounded PPO step, barely changed
-(action mix moved <10% in every category; deaths 12→7). **Per decision of
-experience, the world model converts new evidence into behavior change roughly an
-order of magnitude faster** — model refit vs. KL-bounded policy step is itself a
-structural difference between the schools, not just a hyperparameter choice. The
-step-size caution that protects PPO on-distribution is exactly what caps its
-few-shot adaptation off-distribution.
+Why did PPO barely move? We took the comparison apart layer by layer, and the answer
+is **not the data**. PPO's 400 collected decisions were about as rich as the
+teacher's (99 achievement unlocks, including iron and diamond), and its own advantage
+estimates pointed at the right lessons — "open chests" carried the strongest positive
+signal in the batch. The bottleneck is *absorption*. PPO's trust region — the safety
+rule that stops the policy from moving too far per update — tripped after **one
+16-state step**, because off-distribution states make the policy hypersensitive (the
+first gradient step was ~30× larger than normal). The same rule allows 40–110 steps
+per update on familiar territory. So PPO absorbed 16 states of its 400; the teacher's
+supervised refit absorbed all 3,600 rows it had ever seen, and then re-planning
+spread the update everywhere: re-scoring the same floor-1 situations under the old
+and new models, the preferred action changed in **78% of states**, in exactly the
+directions the evidence pointed (chests and potions way up, mining unchanged).
+
+Even the sleep fix is smarter than "stop sleeping": the adapted teacher actually
+sleeps *more* (58 takes vs 38), but its predicted danger of sleeping rose 14× in the
+risky states, so it now picks its moments — deaths per sleep fell from 34% to 5%. It
+learned *when* sleep kills.
+
+The takeaway: **per decision of experience, the world model converts evidence into
+behavior change roughly ten times faster.** That is not a tuning issue. Learning
+facts and re-planning against them has no speed limit; an on-policy policy gradient
+must move slowly to stay valid. The caution that protects PPO at home is exactly
+what prevents it from adapting quickly somewhere new.
 
 ---
 
 ## 4. What it took to measure this
 
-The results above consumed roughly a third of the project's effort. The other two
-thirds went into making them *measurable*, and the failures found along the way are
-part of the contribution ([docs/LESSONS.md](docs/LESSONS.md) holds the full set):
+The results took about a third of the effort. The other two thirds went into making
+them measurable, and the failures along the way are part of what this project has to
+offer ([docs/LESSONS.md](docs/LESSONS.md) has the full list):
 
-- **The no-op audit.** The teacher's first "failure" was 61.4% of its budget spent on
-  actions that did nothing (sleep at full energy). The fix was in the action
-  interface, not the learner — and every "system X is worse" diagnosis since starts
-  with "what did X's budget actually buy?"
-- **The terminal-state bug.** Craftax raises `done` one step *after* health hits zero.
-  Five separate decision loops each needed the same guard; the one that lacked it
-  charged 81 post-death decisions to one arm's budget and wrote (corpse, action) → 0
-  rows into its training data. The rule now lives in one function (`env.is_terminal()`)
-  asserted by a consistency gate across all four loops — "one rule, one function"
-  stopped being a style preference and became a correctness requirement.
-- **Instrument before verdict.** Four early trends died when the eval grew from 10 to
-  60 worlds. A comparison without a minimum-detectable-effect number attached is a
-  mood, not a measurement.
-- **Suspect the instrument first.** The single most valuable reflex this project
-  trained: when a number is surprising, the first hypothesis is that the *measurement*
-  is broken. It was, repeatedly — a budget ledger without run identity (summing
-  all-time totals across runs), a resumed log read as a fresh runtime, an eval window
-  dominated by server startup.
+- **Audit what the budget actually bought.** The teacher's first "failure" turned out
+  to be 61% of its budget spent on do-nothing actions. The fix was in the action
+  menu, not the learner. Every diagnosis since starts with "what did this system's
+  budget actually buy?"
+- **One rule, one function.** Craftax reports death one step *late*, so every
+  decision loop needs the same guard. It existed in five copies; the one copy that
+  was missing it charged 81 post-death decisions to one arm and wrote corpse-state
+  rows into its training data. The rule now lives in exactly one function, and a
+  consistency check asserts every loop calls it.
+- **Instrument before verdict.** Four early "trends" died when the evaluation grew
+  from 10 worlds to 60. A comparison that doesn't know its own detection threshold
+  is a mood, not a measurement.
+- **When a number surprises you, suspect the measurement first.** It was the
+  measurement, repeatedly: a budget ledger that couldn't tell runs apart, a resumed
+  log read as a fresh one, a timing window dominated by server startup.
 
 ---
 
 ## 5. Limitations
 
-- **Dev-set results.** Seeds 40–99, used throughout development. The 80-world test
-  set is reserved, unspent, and will be spent once.
-- **One training seed per arm.** Training-seed variance is unmeasured; a second
-  teacher seed is queued before any publication-grade claim. The teacher-vs-FROZEN
-  headline is p<0.001, but one internal rung of the ablation ladder sits at p=0.050.
-- **One environment, one model size, 40-turn episodes.** The bias-variance and
-  symmetry findings are hypotheses elsewhere, results here.
-- **The action interface does real work.** All systems benefit from the grounded
-  menu and scripted skills; these results say nothing about end-to-end token-level
-  control.
-- **Training so far is surface-floor.** Floor-1 results are transfer and few-shot
-  studies; full-depth training and evaluation (roadmap stage 4) has not begun.
+- **These are development-set results.** The 80 held-out test worlds are still
+  untouched and will be spent once, at the end.
+- **One training seed per arm.** Run-to-run training variance is unmeasured. The
+  headline result is p<0.001, but one internal rung of the ablation ladder sits
+  right at p=0.05; a second seed is queued before any publication-grade claim.
+- **One game, one model size, 40-turn episodes.** The bias-variance and symmetry
+  findings are results here and hypotheses anywhere else.
+- **The action menu does real work.** Every system benefits from the grounded menu
+  and scripted skills. This study says nothing about end-to-end control from raw
+  tokens.
+- **Training so far happens on the surface floor.** The dungeon results are transfer
+  and few-shot studies. Full multi-floor training hasn't started yet.
 
 ## 6. Status and next steps
 
-Against the program roadmap (README):
+Against the roadmap in the README:
 
-- **Stage 1 — matched-budget comparison: complete** (§3.1–3.3, §3.5), pending a
-  second training seed and the one-shot test-set protocol for publication-grade
-  claims.
-- **Stage 2 — floor transfer and few-shot adaptation: complete for floor 1**
-  (§3.4, §3.6), with both pre-registered mechanism readouts resolved.
-- **Stage 3 — DISTILL: designed and gated, not yet run**
-  ([docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md)): knowledge-union distillation
-  with floor-conditional targets, confidence gating from ensemble variance, an
-  upkeep exemption from the trust region, and a KL anchor against interference.
-  The few-shot result added an option worth measuring: the floor-adapted teacher is
-  a stronger distillation source than the surface-only one, since its dungeon
-  habits are no longer lethal.
-- **Stage 4 — full-depth training** via the snapshot-bank curriculum: next up, with
-  a queued prerequisite on the surface side — randomized-prior exploration for the
-  discovery gap §3.6 diagnosed (the pre-registered trigger has fired: depth is
-  proven feasible by the LLM arms, and proven learnable-when-reached by the
-  few-shot teacher; what's missing is the exploration to connect the chain).
-- **Stage 5 — counterfactual long-horizon credit assignment**: infrastructure ready
-  (exact branch-and-replay), waiting on stage 4's deep trajectories.
+- **Stage 1 — the matched-budget comparison: done** (sections 3.1–3.3, 3.5). Still
+  owed: a second training seed and the one-shot test-set run.
+- **Stage 2 — floor transfer and few-shot adaptation: done for floor 1**
+  (sections 3.4, 3.6), with both pre-registered predictions resolved.
+- **Stage 3 — distillation: running now.** The adapted teacher is the source — its
+  dungeon habits are no longer lethal, which removes the main risk of teaching them
+  to the LLM. Design in [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md).
+- **Stage 4 — full-depth training** using the saved-state curriculum. One
+  prerequisite queued first: the exploration upgrade for the surface discovery gap,
+  now well-motivated — the few-shot result proved the teacher learns deep resources
+  easily once it can reach them.
+- **Stage 5 — counterfactual credit assignment over long horizons.** The
+  infrastructure (exact save/restore and branching) is built; it waits on stage 4
+  producing trajectories deep enough to need it.
 
 ---
 
-*All numbers in this report are reproducible from the repo: every table has a driver
-script, every claim a gate or verdict script, and every run's budget is audited from
-its own transition files. See [PROGRESS.md](PROGRESS.md) for the living lab notebook.*
+*Every number in this report is reproducible from the repo. Each table has a driver
+script, each claim has a check or verdict script, and each run's budget is counted
+from its own log files. [PROGRESS.md](PROGRESS.md) is the running lab notebook.*
