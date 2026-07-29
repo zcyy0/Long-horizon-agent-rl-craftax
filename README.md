@@ -1,324 +1,171 @@
-# Long-Horizon Reinforcement Learning for Hierarchical LLM Agents in Craftax
+# craftax-rl — long-horizon RL for hierarchical LLM agents on full Craftax
 
-> **Current focus:** sample-efficient planning and adaptation with semi-Markov PPO+GAE and a structured action-outcome model.  
-> **Planned extension:** long-horizon counterfactual credit assignment once the agent can reliably produce deeper, longer trajectories.
+A research program on **long-horizon credit assignment**: can an agent learn to execute
+plans whose payoff arrives hundreds of primitive steps later — and what should the
+source of that competence be, a pretrained prior or a learned world model?
 
-## Project overview
+The testbed is **full [Craftax](https://github.com/MichaelTMatthews/Craftax)** (not the
+simplified Crafter or the 1-floor variants): a 9-floor dungeon crawler with a deep tech
+tree (wood → stone → iron → diamond and beyond), survival meters (food, water, energy,
+health), day/night cycles, hostile mobs, and 67 one-time achievements. Reaching the
+deep floors requires chaining dozens of macro-decisions — gear up, keep meters alive,
+descend, re-gear under harsher rules — which makes it one of the harder open
+credit-assignment benchmarks that still runs fast enough for controlled experiments.
 
-This project studies how a hierarchical LLM agent can learn to act over long horizons in Craftax while using interaction data efficiently.
+## Project scope
 
-The research is staged:
+The agent is hierarchical: a planner (an LLM, or a learned world model — that choice is
+the experiment) picks one **grounded macro-action** per decision from a menu built by
+the environment harness; a scripted controller expands it into primitive steps. This
+turns an episode from thousands of primitive actions into a short sequence of
+meaningful decisions — and makes the process semi-Markov, so all credit assignment is
+duration-aware (discounting by elapsed game time, not decision count).
 
-1. **Phase I — sample-efficient planning and adaptation.** Learn reusable action-outcome structure from earlier Craftax experience and use it to make better decisions at unseen floor frontiers.
-2. **Phase II — long-horizon credit assignment.** Use exact simulator interventions to learn which earlier subgoal decisions caused delayed achievements, survival, depth, and return.
+The program, end to end:
 
-The LLM does not press individual game buttons. It selects a structured subgoal such as `mine wood`, `eat`, `craft stone pickaxe`, `fight`, or `descend`. A narrow scripted controller executes that subgoal for a variable number of primitive game steps and records the result in a decision ledger.
+1. **Matched-budget comparison of knowledge sources** *(complete — results below)*:
+   frozen LLM planner vs. PPO+GAE-finetuned LLM vs. from-scratch world-model planner
+   vs. teacher-distilled LLM, each given exactly 3,200 environment decisions.
+2. **Floor transfer and few-shot adaptation** *(complete for floor 1)*: how does each
+   system's knowledge survive a distribution shift it never trained on, and how fast
+   does each convert new experience into behavior change?
+3. **Knowledge-union distillation** *(designed — [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md))*:
+   merge the LLM's tech-tree prior with the world model's learned survival competence
+   without importing either side's failure modes.
+4. **Full-depth training and evaluation** *(ahead)*: extend training beyond the surface
+   via the snapshot-bank curriculum (floor-entry states are banked and restorable
+   exactly, RNG and all), toward training and evaluating across all nine floors.
+5. **Long-horizon credit assignment beyond GAE** *(ahead — the program's namesake)*:
+   once deep, diverse trajectories exist, use the exact branch-and-replay machinery to
+   compute counterfactual credit — "which decision 200 steps ago made this diamond
+   possible?" — and test whether it improves on standard advantage estimation. The
+   infrastructure (exact state/RNG/memory snapshotting, paired branching) is built and
+   already powers the transfer studies.
 
-```text
-observation + recent ledger
-           |
-           v
-      LLM planner
-   proposes K subgoals
-           |
-           v
-structured outcome model
-predicts reward, risk, progress,
-and uncertainty for each subgoal
-           |
-           v
-      candidate reranker
-           |
-           v
- scripted skill controller
-           |
-           v
- Craftax transition + ledger entry
+Full design rationale: [REVISED_RESEARCH_PLAN.md](REVISED_RESEARCH_PLAN.md).
+Living lab notebook: [PROGRESS.md](PROGRESS.md).
+Narrative report of results so far: [project_report.md](project_report.md).
+
+## Current results
+
+### 1. Under a matched budget, the from-scratch world model beats the LLM — on its training distribution
+
+60 paired evaluation worlds · matched 3,200-decision training budgets (audited exactly) ·
+identical grounded action space · one shared evaluator · paired bootstrap.
+
+| system | reward | achievements | survival | vs FROZEN |
+|---|---:|---:|---:|---|
+| **World-model planner** (from scratch, no LLM, ~0 GPU) | **10.61** | **10.6** | **90%** | **+3.32, p<0.001** |
+| PPO+GAE-finetuned LLM (Qwen3-4B + LoRA, 3.2 GPU-h) | 7.66 | 8.5 | 52% | +0.36, p=0.22 n.s. |
+| Frozen LLM planner (Qwen3-4B) | 7.29 | 8.1 | 48% | — |
+| Distilled (teacher → LLM) | *designed, not yet run* | | | |
+
+PPO on this budget is statistically indistinguishable from not training at all — a
+carefully-measured null result (n=60, MDE ≈ 0.9).
+
+### 2. The systems know different things — and die where their knowledge comes from elsewhere
+
+- The LLM planners execute the deep tech chain out of the box — wood → stone → **iron**
+  (14/60 worlds) — because the pretrained prior already contains Minecraft's tech tree.
+  The from-scratch planner never discovers iron on the surface: its exploration never
+  completes the chain to reach ore.
+- The LLM planners **die of thirst** (55 dehydration deaths across two arms, ~zero
+  `drink` actions) — Minecraft has no thirst meter, and 3,200 decisions of PPO did not
+  patch the hole in the prior. The world model *learned* the meters and survives 90%.
+- One floor down, in a dungeon neither trained on, the roles invert exactly: the world
+  model's surface-learned habit (sleep at low energy — safe above ground) becomes its
+  leading cause of death, while the LLM prior, which lacks the sleep mechanic entirely,
+  transfers better. **Each system dies precisely where its knowledge's origin diverges
+  from the world it is standing in.**
+
+### 3. Adaptation speed is itself a world-model advantage
+
+Given 400 dungeon decisions to adapt (few-shot, matched across arms), the world-model
+planner unlearns the lethal sleep habit (deaths 22→8), acquires the whole dungeon
+economy — coal, furnaces, potions, bows, **iron in 7/40 and diamond in 3/40 worlds** —
+and nearly triples its floor-1 reward (4.81 → 13.46, p<0.001), with zero forgetting on
+the surface. One KL-bounded PPO step on the same 400 decisions leaves the LLM's
+behavior almost unchanged. **Per decision of experience, the model-based system
+converts evidence into behavior change roughly an order of magnitude faster** — model
+refit vs. trust-region policy step is a structural difference between the schools.
+
+The floor-1 result also resolves *why* the surface iron gap exists: with ore actually
+exposed one floor down, 400 decisions sufficed — so the gap is about the long chain to
+**reach** ore, not about valuing it. That is a credit-assignment/exploration finding,
+and it is what stages 4–5 of the program attack.
+
+## Why the comparison is fair (the part that took the longest)
+
+Most "A beats B" agent comparisons die on inspection. The fairness contract
+([docs/METRICS.md](docs/METRICS.md)) holds constant: interaction budget (3,200
+decisions per arm, audited to the unit from each run's own transition files), action
+space (one menu constructor for all systems, with the invariant "offered ⟹ doable"),
+evaluation worlds (paired seeds), evaluator code (one script for every system), and
+the exploration floor (ε=0.05 mirrored across learned arms). Version stamps on every
+data file make cross-version comparisons a **fatal preflight error**.
+
+Deliberately *not* matched, and reported instead: mechanism and compute. The LLM arms
+inherit an internet-scale prior and spend ~376M tokens + 3.2 GPU-h; the world model
+trains from zeros in CPU minutes. The from-scratch system winning *despite* that
+asymmetry is what makes the result interesting.
+
+Measurement discipline that turned out to be load-bearing:
+
+- **Powered evals** — at n=10 worlds, four separate "trends" appeared and died at n=60;
+  every reported comparison carries its minimum detectable effect.
+- **Pre-registered readouts** before each run; negative results (an honest reward head
+  made things *worse* — the report's bias-variance section) reported with the same
+  prominence as wins.
+- **Gates before compute** — every mechanism (menu grounding, reward-head exactness,
+  PPO gradient path, evaluator consistency, model-exploitation detection) has an
+  executable gate that must pass before budget is spent on it.
+
+## What's in the box
+
+```
+harness/        Craftax as a text game: verified renderer, fog-of-war, 17 scripted
+                skills, executor with shared affordance predicates, grounded menu
+                constructor ("offered ⟹ doable")
+rl/             Semi-MDP returns/GAE (duration-aware discounting), PPO core,
+                budget ledger — unit-tested against hand-computed references
+models/         Typed-head macro world model, 3-member bootstrap ensemble,
+                compositional reward head (hard achievement masking + empirical-
+                Bayes shrinkage), continuation-value network
+planner/        Teacher planner: Thompson sampling to collect, LCB (μ−κσ) to deploy
+exploration/    Snapshot bank: exact save/restore of env+RNG+memory — the substrate
+                for floor curricula and counterfactual credit assignment
+scripts/        Drivers for every arm, 12+ gate scripts, verdict/budget/exploitation
+                auditors
+eval/           Paired-bootstrap statistics; one evaluator for all systems
+docs/           METRICS.md (measurement contract), LESSONS.md (15 engineering rules
+                this project paid for), DISTILL_DESIGN.md, ACTION_INTERFACE.md
 ```
 
-This converts a very long button-level episode into a shorter sequence of semantically meaningful planner decisions while preserving Craftax's survival, exploration, combat, and crafting challenges.
-
-## Motivation
-
-Model-free reinforcement learning can require many complete trajectories before a useful action receives a reliable learning signal. This is especially costly when an agent encounters a new environment or when rewards arrive long after the decisions that caused them.
-
-A more capable agent should be able to:
-
-- learn reusable action-outcome relationships from prior experience;
-- transfer those relationships to unfamiliar states;
-- predict the consequences of candidate actions before acting;
-- recognize uncertainty and adapt from a small amount of new experience; and
-- assign delayed success or failure to the earlier decisions that actually influenced it.
-
-Craftax is a useful controlled testbed. Earlier and deeper floors share broad concepts—survival, tools, resources, enemies, exploration, and ladders—but introduce new states and combinations. The simulator also supports exact state snapshots, allowing alternative subgoals to be executed from the same starting state.
-
-## Current system
-
-Already implemented:
-
-- a text interface for full Craftax, verified against the native observation;
-- real fog-of-war;
-- an 11-skill scripted controller for navigation, crafting, survival, combat, and floor transitions;
-- a hierarchical loop in which a Qwen3-4B planner chooses one subgoal per turn;
-- a ledger containing decisions, durations, state changes, rewards, and achievements;
-- deterministic replay and rollout logging;
-- local GPU serving and rollout collection.
-
-The untrained planner currently:
-
-- earns about seven achievements per game on average;
-- often reaches stone or iron tools on the surface;
-- compresses roughly 276 primitive actions into about 38 LLM decisions;
-- produces valid structured subgoals reliably; and
-- does not yet survive and descend consistently.
-
-The first coverage milestone is therefore a **shared survival-and-descent checkpoint** used by every learned system in the comparison.
-
-## Research questions
-
-### Phase I: generalization and sample-efficient planning
-
-> Can an action-conditioned structured outcome model, trained on prior Craftax experience, improve zero-shot and few-shot decisions at unseen floor frontiers and reach deeper states more efficiently than a frozen LLM planner or model-free PPO+GAE?
-
-The study measures:
-
-- **zero-shot generalization:** decisions made before using target-floor training data;
-- **few-shot adaptation:** improvement after a small target-floor interaction budget;
-- **end-to-end competence:** native reward and maximum floor from the normal game start; and
-- **sample efficiency:** performance versus interactions and generated LLM tokens.
-
-### Phase II: long-horizon credit assignment
-
-> After the agent can produce sufficiently long and diverse trajectories, can a branch-supervised counterfactual critic assign delayed credit more accurately and improve policy learning relative to semi-Markov GAE?
-
-Phase II is an extension, not a prerequisite for completing Phase I.
-
-## Phase I systems
-
-The first complete study compares only three systems.
-
-| System | Role |
-|---|---|
-| **Frozen LLM planner** | Measures pretrained zero-shot behavior without learning. |
-| **Semi-Markov PPO + GAE** | Model-free RL baseline over variable-duration subgoals. |
-| **LLM + structured outcome-model reranking** | Proposed model-based method. |
-
-Exact simulator branch-and-replay is initially an **evaluation and calibration tool**, not a fourth full training algorithm.
-
-### Model-free baseline: semi-Markov PPO + GAE
-
-Each skill can consume a different number of primitive steps. The PPO baseline therefore uses duration-aware bootstrapping rather than treating every subgoal as one equal-duration step.
-
-For skill duration $\tau_t$, internal primitive rewards $r_{t,j}$, and critic $V(h_t)$:
-
-$$
-R_t^{\mathrm{macro}}=\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j},
-$$
-
-$$
-\delta_t=R_t^{\mathrm{macro}}+\gamma^{\tau_t}V(h_{t+1})-V(h_t).
-$$
-
-The baseline computes GAE over the planner-level trajectory and updates the LLM policy with PPO.
-
-### Proposed method: structured outcome-model reranking
-
-At each planner decision, the LLM proposes a small set of diverse valid subgoals in one generation call. A lightweight ensemble predicts planner-relevant outcomes for each candidate, including:
-
-- short-horizon native return;
-- skill success;
-- new-achievement probability;
-- death or survival risk;
-- floor-transition probability;
-- expected duration; and
-- predictive uncertainty.
-
-The first version performs one-step candidate reranking:
-
-$$
-a_t=\arg\max_{a\in\mathcal A_t}\left(\widehat Q_{\mathrm{native}}(h_t,a)-\kappa\widehat\sigma(h_t,a)\right).
-$$
-
-The primary score optimizes predicted native return while penalizing uncertainty. Survival, depth, and achievement predictions are auxiliary targets and diagnostics.
-
-Multi-step planning is optional. It is attempted only after one-step reranking works and requires a compact learned next-state dynamics model.
-
-## Generalization protocol
-
-The first target is floor 1.
-
-1. Train on surface trajectories only.
-2. Create held-out floor-1 entry snapshots with a scripted, curriculum, or archive policy.
-3. Exclude target-floor transitions from zero-shot training.
-4. Give control to each evaluated system immediately after floor entry.
-5. Measure performance before any floor-1 update: **zero-shot**.
-6. Give adaptive systems the same small floor-1 interaction budget and reevaluate on untouched snapshots: **few-shot**.
-7. Separately evaluate each integrated agent from the normal surface start.
-
-A later transfer study may train on floors 0–1 and hold out floor 2. Repeating the protocol through all nine floors is not required.
-
-## Exact branch-and-replay evaluation
-
-At a selected saved state, the evaluator executes several candidate subgoals from the exact same simulator and PRNG state, then continues each branch for the same limited horizon with a fixed continuation policy.
-
-This provides a direct action-ranking target under a specified continuation procedure. It does not claim a universal causal effect independent of the policy or horizon.
-
-Phase I reports:
-
-- top-1 action accuracy against branch outcomes;
-- pairwise ranking accuracy;
-- regret relative to the best tested candidate;
-- calibration of predicted return and death risk; and
-- performance on seen versus unseen floors.
-
-Branching is concentrated at important states—new floors, ladders, low-health decisions, unfamiliar enemies, and achievement frontiers—to control compute.
-
-## Planned Phase II: long-horizon credit assignment
-
-Phase II begins only after Phase I produces trajectories with enough successful and unsuccessful long-horizon outcomes. Credit assignment cannot learn the consequence of a floor or achievement that never appears in the data.
-
-### Counterfactual credit target
-
-At selected history state $h_t$, execute alternative actions from the same snapshot and continue with a frozen continuation policy $\pi_c$ for horizon $H$:
-
-$$
-Q_H^{\mathrm{branch}}(h_t,a)=\mathbb E\left[G_{t,H}\mid\mathrm{do}(A_t=a),\pi_c\right].
-$$
-
-A learned critic $Q_\psi(h,a)$ is trained to predict these branch outcomes. Its centered action credit is
-
-$$
-A_t^{\mathrm{CF}}=Q_\psi(h_t,a_t)-\mathbb E_{a'\sim b(\cdot\mid h_t)}\left[Q_\psi(h_t,a')\right],
-$$
-
-where $b$ is a documented alternative-action baseline over valid candidates.
-
-The first online extension will compare:
-
-| System | Credit signal |
-|---|---|
-| **PPO+GAE** | Standard duration-aware GAE. |
-| **PPO+GAE+CF** | The same PPO pipeline plus a calibrated counterfactual-credit term from the branch-supervised critic. |
-
-The study will avoid a large algorithm bake-off. HCA, COCOA, RUDDER, and RRD remain optional later comparisons.
-
-### Credit-assignment stress tests
-
-The extension can evaluate two reward regimes:
-
-1. **Native Craftax rewards**, where achievements provide intermediate feedback.
-2. **Controlled delayed rewards**, where the same total reward is shifted later or bundled at episode end.
-
-This tests whether counterfactual credit becomes more useful as temporal delay increases.
-
-### Phase II evaluation
-
-- agreement with held-out branch action rankings;
-- regret and calibration of counterfactual value predictions;
-- native reward and maximum floor;
-- learning speed versus interactions and LLM tokens;
-- sensitivity to reward delay; and
-- qualitative analysis of decisions where GAE and counterfactual credit disagree.
-
-The recipe graph may be reported as a secondary structural-relevance diagnostic, but exact branch comparisons are the primary intervention-grounded metric.
-
-## Evaluation and budget
-
-### Frontier evaluation
-
-- native reward during the first $H$ planner decisions;
-- survival and catastrophic-action rate;
-- new achievements;
-- branch-based action-ranking regret;
-- zero-shot and few-shot adaptation curves.
-
-### End-to-end evaluation
-
-- total native achievement reward;
-- maximum floor reached;
-- probability of first descent;
-- survival duration;
-- generated LLM tokens; and
-- primitive environment actions.
-
-### Solo-research reporting
-
-The minimum final Phase I study uses one training run per learned system and paired evaluation on the same held-out world seeds. Bootstrap intervals over evaluation worlds will be reported with an explicit note that they do not measure retraining variance. A second training seed is optional after the complete pipeline works.
-
-Phase II reuses the Phase I agent, snapshots, encoder, branch runner, and logging infrastructure. It should not begin with a new large model or a many-method comparison.
-
-## Scope
-
-### Required for Phase I
-
-1. Shared survival-and-descent coverage checkpoint.
-2. Structured transition dataset and held-out-floor protocol.
-3. One-step structured outcome model and candidate reranker.
-4. Correct semi-Markov PPO+GAE baseline.
-5. Targeted branch-and-replay evaluator.
-6. One compute-matched end-to-end comparison.
-
-### Optional within Phase I
-
-- online adaptation of a small outcome-model adapter;
-- two- or three-subgoal model-predictive planning;
-- branch-supervised outcome-model fine-tuning; and
-- a second independent training seed.
-
-### Phase II extension
-
-- collect diverse long-horizon trajectories with delayed outcomes;
-- create a fixed branch-comparison credit dataset;
-- train a branch-supervised counterfactual critic;
-- compare PPO+GAE with PPO+GAE+CF under native and delayed rewards; and
-- publish an intervention-grounded credit-quality analysis.
-
-### Out of scope unless the earlier stages succeed
-
-- a pixel-level Dreamer or MuZero implementation;
-- seven-way credit-assignment comparisons;
-- exhaustive hyperparameter sweeps;
-- full HCA, COCOA, RUDDER, or RRD implementations;
-- claims that the agent can infer arbitrary unseen rules without evidence; and
-- state-of-the-art Craftax performance.
-
-## Roadmap
-
-### Phase I — planning and generalization
-
-- [x] Craftax text environment and verification
-- [x] 11-skill controller
-- [x] hierarchical Qwen planner and ledger
-- [x] replayable rollout pipeline
-- [ ] shared survival-and-descent checkpoint
-- [ ] held-out frontier snapshot dataset
-- [ ] structured outcome model
-- [ ] multi-candidate LLM interface and reranker
-- [ ] branch-based action-ranking evaluator
-- [ ] semi-Markov PPO+GAE baseline
-- [ ] zero-shot and few-shot frontier evaluation
-- [ ] end-to-end compute-matched comparison
-- [ ] Phase I report, plots, and reproducibility instructions
-
-### Phase II — optional long-horizon credit assignment
-
-- [ ] define the continuation policy, branch horizon, and alternative-action baseline
-- [ ] collect deeper successful and unsuccessful trajectories
-- [ ] build a held-out branch-comparison credit dataset
-- [ ] train and calibrate the counterfactual critic
-- [ ] integrate the credit term into the PPO pipeline
-- [ ] run native-reward and controlled-delay comparisons
-- [ ] publish credit-quality and policy-learning results
-
-## What would count as success?
-
-Phase I succeeds if it shows a clear, reproducible capability gain such as:
-
-- lower branch regret on unseen frontier states;
-- higher first-visit survival;
-- faster adaptation after limited target-floor experience;
-- more successful descents or greater maximum depth under the same budget; or
-- a useful failure analysis showing when the learned model should not be trusted.
-
-Phase II succeeds if the branch-supervised critic predicts held-out action-replacement effects and either improves long-horizon policy learning or clearly identifies conditions under which standard GAE is already sufficient.
-Detailed engineering decisions, schemas, tests, budget gates, and the Phase II extension contract are documented in `docs/CRAFTAX_INTERNAL_IMPLEMENTATION_PLAN.md`.
+## Reproducing
+
+```bash
+python -m venv env && env/bin/pip install -r requirements.txt   # CPU env (game, RL, WM)
+# GPU env additionally needs: vllm, peft, transformers (LLM arms only)
+
+# gates (seconds–minutes each, CPU):
+python scripts/preflight.py --help          # comparability preflight
+python scripts/reward_head_demo.py          # reward-head exactness gate
+
+# the arms:
+bash scripts/run_s3_ppo.sh                  # PPO loop (GPU, ~8 h)
+bash scripts/run_s6_teacher.sh              # teacher loop (CPU, ~2 h)
+bash scripts/s11_fewshot_teacher.sh         # floor-1 few-shot arm (CPU, ~1 h)
+python scripts/m5_verdict.py --teacher ... --frozen ...   # paired verdict
+```
+
+## Honest caveats
+
+- Dev-set results (seeds 40–99). A pristine 80-world test set (seeds 100–179) is
+  reserved and unspent pending the final roster.
+- One training seed per arm so far; training-seed variance is unmeasured. The headline
+  teacher-vs-FROZEN gap is p<0.001; one internal ablation rung sits at p=0.050.
+- Training so far is surface-floor; floor-1 results are transfer/few-shot studies.
+  Full-depth training (stage 4) and counterfactual credit assignment (stage 5) are the
+  program's open half.
+- Single environment, single model size (4B), 40-turn episodes. Claims are scoped to
+  this regime.
