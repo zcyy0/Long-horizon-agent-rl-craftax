@@ -1,3 +1,4 @@
+# Long-Horizon Hierarchical RL in Craftax
 **If a pretrained LLM and a from-scratch world model get exactly the same amount of
 game experience, who plays better?** This repo runs that comparison properly — same
 budget, same action space, same evaluator — and follows the answer somewhere
