@@ -16,9 +16,7 @@ Two schools of thought dominate current agent research:
 2. **The learning school**: model the environment from data, plan against the model,
    and let interaction — not pretraining — be the source of competence.
 
-These are usually compared across papers, with incompatible budgets, action spaces,
-and evaluation protocols, which makes the comparisons nearly meaningless. This project
-puts both schools in one harness on one benchmark under one budget and asks a narrow,
+This project puts both schools in one harness on one benchmark under one budget and asks a narrow,
 decidable question:
 
 > **Given exactly 3,200 environment decisions of training interaction, does a
