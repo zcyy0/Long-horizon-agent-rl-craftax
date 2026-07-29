@@ -10,10 +10,7 @@ There are two common answers to "how should an agent get good at an environment?
 2. **Learn a model of the environment.** Predict what actions do, plan against those
    predictions, and let interaction be the source of competence.
 
-These two approaches are usually compared across different papers, with different
-budgets, different action spaces, and different evaluation setups. That makes the
-comparisons hard to trust. This project puts both approaches in the same harness, on
-the same benchmark, with the same budget, and asks one narrow question:
+This project puts both approaches in the same harness, on the same benchmark, with the same budget, and asks one narrow question:
 
 > **Given exactly 3,200 environment decisions to learn from, does a world model
 > trained from scratch beat a frozen pretrained LLM planner? And does it beat the
@@ -22,10 +19,7 @@ the same benchmark, with the same budget, and asks one narrow question:
 The testbed is **Craftax** (the full version). It is a 2D survival game in the
 Minecraft family: a tech tree that runs from wood to stone to iron to diamond,
 hunger/thirst/energy/health meters, day and night, hostile monsters, and a dungeon
-with nine floors. Two properties make it a good testbed. It is hard enough that
-neither approach wins trivially. And, in a way that turned out to matter a lot, *part*
-of the game matches Minecraft folklore an LLM already knows (the tech tree), and part
-of it does not (the thirst meter, the dungeon).
+with nine floors. 
 
 This comparison is stage one of a larger program (the README has the roadmap). The
 same infrastructure is built to eventually support training and evaluation across all
@@ -58,13 +52,8 @@ is not offered when energy is full. Craft is not offered without materials. The 
 constructor checks these conditions using the same code the controller uses, so the
 two can never disagree.
 
-This sounds like a detail. It nearly sank the project. An early version offered
-`drink` and `sleep` unconditionally. The LLM ignored them (its prior "knows" they're
-usually pointless), but the world-model planner had no such instinct and spent **61%
-of its entire training budget** on actions that did nothing. Every comparison made
-with that menu was garbage. The menu is now covered by regression tests, because the
-menu *is* the experiment: if different systems saw different action spaces, none of
-the downstream numbers would mean anything.
+(The full constructor contract — its two invariants, the shared grounding predicates,
+and the gate that enforces them empirically — is in appendix A.1.)
 
 ### 2.2 Credit assignment that respects time
 
@@ -73,7 +62,8 @@ a long `go_to` forty. If you discount rewards per *decision*, slow actions get a
 unfair advantage. So everything here — returns, advantages, the planner's Q-values —
 discounts by **elapsed game time** instead. This "semi-Markov" accounting is
 implemented once, shared by every consumer, and unit-tested against hand-computed
-examples.
+examples. (The exact return, advantage, and policy-loss formulas are in appendix
+A.3.)
 
 ### 2.3 A world model with structure where the game has rules
 
@@ -104,6 +94,9 @@ The teacher's world model is deliberately not one big black box:
   random jitter). During *evaluation*, the planner scores actions by the mean minus
   half the spread — a pessimistic rule. Evaluating with the exploration rule would
   count the exploration bonus as skill.
+
+(The architecture, the per-type head parameterizations, and the assembled reward
+formula are in appendix A.2.)
 
 ### 2.4 What is held equal, and what is not
 
@@ -317,31 +310,7 @@ what prevents it from adapting quickly somewhere new.
 
 ---
 
-## 4. What it took to measure this
-
-The results took about a third of the effort. The other two thirds went into making
-them measurable, and the failures along the way are part of what this project has to
-offer ([docs/LESSONS.md](docs/LESSONS.md) has the full list):
-
-- **Audit what the budget actually bought.** The teacher's first "failure" turned out
-  to be 61% of its budget spent on do-nothing actions. The fix was in the action
-  menu, not the learner. Every diagnosis since starts with "what did this system's
-  budget actually buy?"
-- **One rule, one function.** Craftax reports death one step *late*, so every
-  decision loop needs the same guard. It existed in five copies; the one copy that
-  was missing it charged 81 post-death decisions to one arm and wrote corpse-state
-  rows into its training data. The rule now lives in exactly one function, and a
-  consistency check asserts every loop calls it.
-- **Instrument before verdict.** Four early "trends" died when the evaluation grew
-  from 10 worlds to 60. A comparison that doesn't know its own detection threshold
-  is a mood, not a measurement.
-- **When a number surprises you, suspect the measurement first.** It was the
-  measurement, repeatedly: a budget ledger that couldn't tell runs apart, a resumed
-  log read as a fresh one, a timing window dominated by server startup.
-
----
-
-## 5. Limitations
+## 4. Limitations
 
 - **These are development-set results.** The 80 held-out test worlds are still
   untouched and will be spent once, at the end.
@@ -356,7 +325,7 @@ offer ([docs/LESSONS.md](docs/LESSONS.md) has the full list):
 - **Training so far happens on the surface floor.** The dungeon results are transfer
   and few-shot studies. Full multi-floor training hasn't started yet.
 
-## 6. Status and next steps
+## 5. Status and next steps
 
 Against the roadmap in the README:
 
@@ -366,7 +335,7 @@ Against the roadmap in the README:
   (sections 3.4, 3.6), with both pre-registered predictions resolved.
 - **Stage 3 — distillation: running now.** The adapted teacher is the source — its
   dungeon habits are no longer lethal, which removes the main risk of teaching them
-  to the LLM. Design in [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md).
+  to the LLM. 
 - **Stage 4 — full-depth training** using the saved-state curriculum. One
   prerequisite queued first: the exploration upgrade for the surface discovery gap,
   now well-motivated — the few-shot result proved the teacher learns deep resources
@@ -376,7 +345,204 @@ Against the roadmap in the README:
   producing trajectories deep enough to need it.
 
 ---
+## Appendix: the three core designs, precisely
 
-*Every number in this report is reproducible from the repo. Each table has a driver
-script, each claim has a check or verdict script, and each run's budget is counted
-from its own log files. [PROGRESS.md](PROGRESS.md) is the running lab notebook.*
+The main text describes *what* was built and *why*. This appendix gives the exact
+contracts and formulas, because the details are where the fairness of the comparison
+actually lives. Everything here is implemented in the named files and covered by the
+gates described alongside it.
+
+### A.1 The grounded action constructor
+
+*`harness/candidate_actions.py` (~380 lines), with every grounding predicate owned by
+`harness/executor.py`.*
+
+The constructor builds the menu every system chooses from, so it carries the study's
+core fairness requirement: the LLM's own generations must never define the action
+space. The menu is assembled from the **public skill schema** plus **observable
+state** only. Two invariants govern it:
+
+1. **Offered ⇒ dispatchable.** Every action on the menu can actually be executed
+   from this state. 
+2. **Availability is not value.** The menu says what is *possible*, never what is
+   *good*. A chest is offered the moment one is visible and reachable — long before
+   any system knows whether opening it pays. This is what makes "learning to use an
+   affordance" measurable separately from "being shown it".
+
+Design decisions that keep those invariants true:
+
+- **Observation discipline.** Every predicate reads the agent's own seen-memory and
+  one shared BFS reachability map computed from it — never the true game map. A menu
+  built from god-mode state would leak information through *which actions appear*,
+  even if no system ever read the map directly.
+- **One rule, one function, shared with the controller.** Each grounding predicate is
+  the executor's own: `craft_requirements()` (full cost, *including* the crafting
+  table this call would have to place), `craft_would_upgrade()` (tools are tiered;
+  re-crafting a held tier is a silent no-op), `place_would_succeed()` (Craftax's
+  placement rules transcribed exactly once — a plant needs grass, not merely a free
+  tile), `enchant_would_succeed()` (table ∧ item ∧ mana ≥ 9 ∧ the gem matching that
+  table), the survival-meter checks, and reachability that excludes mobs behind
+  walls. The menu and the skill executing its promise cannot drift apart, because
+  they are the same code.
+- **The constructor rejects the impossible; the policy owns the unwise.** `descend`
+  is gated on the floor's kill quota because the *game* refuses it below 8 kills —
+  offering it earlier makes "descending was blocked" indistinguishable from
+  "descending was a bad idea", which corrupts credit assignment. Low-health `fight`,
+  by contrast, stays on the menu: the game permits it, so it is the agent's decision
+  to get wrong and learn from. Rule ⇒ gate in the constructor; strategy ⇒ leave to
+  the policy.
+- **Deterministic assembly.** Candidates are added in priority tiers (a guaranteed
+  core — explore fallback, chest, descend — down to directional-explore ballast),
+  deduplicated by canonical form, stably sorted, and capped at 20 (the cap never
+  binds; the largest observed menu is 17). Each candidate carries its *provenance* —
+  the observable fact that licensed it. The schema version is stamped into every
+  data file, and the preflight gate makes cross-version comparisons a hard error.
+- **Verified empirically, not by review.** The `NOOPGATE` check branch-and-replays
+  every candidate offered across ~3,000 real and synthesized states and asserts none
+  consumes zero environment steps; its complement asserts every survival action that
+  *would* help is actually offered. The empirical form earned its cost: it found
+  no-op cases in `eat` and `fight` that nobody had predicted.
+
+### A.2 The world model
+
+*`models/macro_world_model.py`; ensemble in the same file; trained per-round from the
+teacher's own transition stream.*
+
+One-step, direct, structured — no learned latent:
+
+$$M_\psi(x_t, a_t) \rightarrow (\hat{x}_{t+1},\ \hat{r}_t,\ \hat{\tau}_t,\ \hat{d}_t,\ \hat{y}_t)$$
+
+where $x$ is the 132-feature typed state, $a$ a 61-dim action encoding (skill one-hot
+plus arguments; append-only, because inserting a dimension silently re-labels every
+row of existing data), and the outputs are next state, macro-reward, duration in game
+steps, death probability, and 72 named event probabilities. A shared 2×256 MLP trunk
+feeds per-type heads:
+
+| feature type | prediction | loss |
+|---|---|---|
+| continuous | residual in normalized units | Huber |
+| count | residual on the `log1p` scale | Huber |
+| binary | logit | BCE |
+| categorical | per-field softmax | CE |
+| duration $\hat{\tau}$ | `log1p` scale | Huber |
+| death $\hat{d}$ | logit (true termination only — truncation is not death) | BCE |
+| events $\hat{y}$ | one logit per event | BCE |
+
+Two parameterization choices do real work. **Typing** prevents the failure where one
+homogeneous regression head looks accurate on average while being useless per field
+(a skill-id code is not a distance). **Residuals** exploit the fact that most
+features are unchanged by most macro-actions: predicting deltas makes "nothing
+happened" the zero-effort default, so capacity is spent on what actually moved.
+
+**The reward head is assembled, not learned end-to-end.** Craftax's reward *is*
+$\sum_k \text{unlock}_k \cdot c_k + 0.1\,\Delta\text{health}$ with known constants
+$c_k$, so the model predicts per-achievement unlock probabilities and the reward is
+composed from them:
+
+$$\hat{r} \;=\; \underbrace{\sum_k w_k\, \hat{p}_k\, c_k}_{\text{sharp, per-achievement}} \;+\; \underbrace{\hat{p}_{\text{any}} \cdot \frac{\sum_k (1-w_k)\, c_k\, \mathbb{1}[\text{locked}_k]}{\#\text{locked}}}_{\text{pooled prior on the untrusted mass}} \;+\; 0.1\,\widehat{\Delta\text{health}}$$
+
+with three properties, each load-bearing:
+
+- **Exactness by construction:** $\hat{p}_k$ is hard-masked to zero when achievement
+  $k$ is already unlocked. That is a rule of the game, so it is architecture, not
+  training data. (Before the mask, the planner "farmed" spent achievements 471 times
+  per 60 worlds.)
+- **Empirical-Bayes shrinkage:** $w_k = n_k / (n_k + 10)$, computed from training
+  counts at fit time. A head with five coal examples is mostly pooled prior; a head
+  with hundreds is mostly its own evidence. The prior retires itself as counts grow —
+  this is the single change worth +3.3 reward in section 3.2.
+- **A built-in lie detector:** a plain scalar reward head is trained in parallel and
+  never used for planning. If the composed and scalar predictions diverge beyond the
+  within-macro discounting slack, the `REWARDHEAD` gate fails — mislabeled targets
+  cannot pass silently.
+
+**The ensemble and the two selection rules.** Three members are trained on bootstrap
+resamples. For a candidate $a$, each member $m$ scores
+
+$$Q_m(h,a) \;=\; \hat{r}_m(h,a) \;+\; \gamma^{\max(\hat{\tau}_m,\,1)} \cdot \big(1-\hat{d}_m(h,a)\big) \cdot V_\omega\big(\hat{x}'_m(h,a)\big)$$
+
+with $\mu_Q$ and $U$ the mean and spread across members. Predicted death zeroes the
+continuation (no future to discount), and the $\max(\hat{\tau},1)$ floor is the *same
+shared function* the PPO objective uses — see A.3. Then, deliberately, two different
+rules:
+
+- **Collection: Thompson sampling.** One member is sampled *per episode* and trusted
+  fully, so a member that believes in a plan executes the whole plan. Per-decision
+  resampling would average the members out — it looks like exploration while
+  exploring strictly less. An ε = 0.05 floor (mirrored to PPO's) sits on top.
+- **Evaluation: lower confidence bound,** $\arg\max_a\, (\mu_Q - \kappa U)$ with
+  κ = 0.5. Reporting a Thompson run as "the planner's score" would count the
+  exploration bonus as skill; the conflation of these two rules is, in our
+  experience, the main way a model-based result gets overstated.
+
+### A.3 Semi-Markov PPO + GAE
+
+*`rl/smdp_returns.py`, `rl/gae.py`, `rl/ppo.py` — pure-numpy/torch math, imported by
+the GPU trainer but unit-testable without it.*
+
+**Time accounting.** Decision $t$ executes $\tau_t$ primitive game steps with rewards
+$r_{t,0..\tau_t-1}$. Its macro-reward and the episode return are
+
+$$R_t^{\text{macro}} = \sum_{j=0}^{\tau_t-1} \gamma^j r_{t,j}, \qquad G = \sum_t \gamma^{T_t} R_t^{\text{macro}}, \quad T_t = \sum_{i<t}\tau_i$$
+
+and $G$ provably equals the flat primitive-discounted return over the concatenated
+step stream — that identity is a unit test, so "discounting at macro boundaries" is
+checked rather than asserted. The *objective* charges $\gamma^{\max(\tau,1)}$ per
+decision through one shared function (`tau_effective`) used by GAE, the teacher's
+Q-values, and the value-fitting targets alike. The floor exists because a zero-step
+action returning to the same state would otherwise score $Q = V(s)$ *undiscounted* —
+the only free action on the menu, an absorbing self-loop the planner actively
+prefers (this exact loophole consumed 61% of a training budget before it was closed).
+Putting it in one function means the objective cannot fork across the systems being
+compared.
+
+**Advantage estimation.** Semi-Markov TD error and GAE, per decision:
+
+$$\delta_t = R_t^{\text{macro}} + \gamma^{\tau_t}(1-d_t)\,V(h_{t+1}) - V(h_t), \qquad \hat{A}_t = \delta_t + \gamma^{\tau_t}\lambda\,(1-d_t)\,\hat{A}_{t+1}$$
+
+with γ = 0.99 per game step, λ = 0.95, and one λ-decay per *decision*. $d_t$ marks
+true death only, which zeroes the bootstrap; an episode cut short by the rollout
+limit instead bootstraps from $V(h_T)$. Conflating those two endings is one of the
+quiet bugs the unit suite constructs on purpose.
+
+**The policy is a distribution over the menu.** For candidate $a$ with canonical form
+$y_1..y_L$:
+
+$$s_\theta(h,a) = \frac{1}{L^\alpha}\sum_{j} \log p_\theta(y_j \mid h, y_{<j}), \qquad \pi_\theta(a\mid h) = \frac{e^{s_\theta(h,a)/T}}{\sum_{a' \in C(h)} e^{s_\theta(h,a')/T}}$$
+
+Both parameters were measured, not defaulted. α = 1 (a per-token mean) exists
+because raw sums span ~27 nats *by string length* against ~1.4 nats of actual
+preference — an unnormalized policy is sharp about verbosity, not value. $T$ is
+calibrated on development worlds to a target entropy of $0.5\ln|C|$ and then frozen;
+it is re-calibrated whenever the menu changes, because it depends on $|C|$. The same
+$(\alpha, T)$ is shared by rollout collection, the PPO ratio, and the distillation
+loss — a mismatch between collection and training silently changes the behavior
+policy while every diagnostic stays green.
+
+**The update** is a token-level clipped surrogate over the action-span tokens, with
+the per-sequence advantage broadcast to each of its tokens:
+
+$$\rho_{t,j} = \exp\big(\log\pi_{\text{new}}(y_j) - \log\pi_{\text{old}}(y_j)\big), \qquad \mathcal{L} = -\,\mathbb{E}_{t,j}\Big[\min\big(\rho_{t,j}\hat{A}_t,\ \text{clip}(\rho_{t,j}, 1\pm\epsilon)\,\hat{A}_t\big)\Big]$$
+
+Token-level rather than sequence-level because a sequence ratio
+$\exp(\sum_j \Delta\log p_j)$ *compounds* per-token drift multiplicatively over a
+multi-token action — measured directly: a single 10⁻⁶-scale step produced
+approx-KL ≈ 3.2 under the sequence form. Per-token ratios do not compound, so the
+clip and the trust region behave as intended. Updates early-stop when approx-KL
+(Schulman's low-variance $k_3$ estimator) exceeds 0.02.
+
+Three disciplines around the formula, each motivated by a bug it prevents:
+
+- **Old log-probs are recomputed** once, under `no_grad`, on the collection-time
+  weights — never trusted from the inference server. The serving and training stacks
+  disagree by up to 3.8 percentage points at the operating temperature; trusting the
+  server's numbers would book that disagreement as policy improvement.
+- **Masking is selection, not multiplication.** Off-span positions contribute
+  exactly zero via `torch.where`, because `0 × NaN = NaN`: one degenerate logit
+  outside the action span must not be able to poison the action's log-prob.
+- **The gradient path is gated against its own plausible bug.** The fast scoring
+  path shares one cached computation across all ~12 candidates; a specific mistake
+  in that sharing yields *perfectly correct scores* with silently wrong gradients.
+  The gate builds that broken version on purpose and asserts the real path is
+  measurably different — the class of check that output-comparison tests
+  structurally cannot provide.
