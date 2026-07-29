@@ -1,171 +1,156 @@
-# Long-horizon RL for Hierarchical LLM agents on Full Craftax
+**If a pretrained LLM and a from-scratch world model get exactly the same amount of
+game experience, who plays better?** This repo runs that comparison properly — same
+budget, same action space, same evaluator — and follows the answer somewhere
+unexpected.
 
-A research program on **long-horizon credit assignment**: can an agent learn to execute
-plans whose payoff arrives hundreds of primitive steps later — and what should the
-source of that competence be, a pretrained prior or a learned world model?
+The game is [Craftax](https://github.com/MichaelTMatthews/Craftax) (full version): a
+2D survival game in the Minecraft family, with a tech tree from wood to diamond,
+hunger/thirst/energy meters, monsters, and a nine-floor dungeon. 
 
-The testbed is **full [Craftax](https://github.com/MichaelTMatthews/Craftax)** (not the
-simplified Crafter or the 1-floor variants): a 9-floor dungeon crawler with a deep tech
-tree (wood → stone → iron → diamond and beyond), survival meters (food, water, energy,
-health), day/night cycles, hostile mobs, and 67 one-time achievements. Reaching the
-deep floors requires chaining dozens of macro-decisions — gear up, keep meters alive,
-descend, re-gear under harsher rules — which makes it one of the harder open
-credit-assignment benchmarks that still runs fast enough for controlled experiments.
+Everything here — environment harness, agent, RL training, world model, evaluation
+statistics — was built and run end-to-end as one project.
 
-## Project scope
+## The program
 
-The agent is hierarchical: a planner (an LLM, or a learned world model — that choice is
-the experiment) picks one **grounded macro-action** per decision from a menu built by
-the environment harness; a scripted controller expands it into primitive steps. This
-turns an episode from thousands of primitive actions into a short sequence of
-meaningful decisions — and makes the process semi-Markov, so all credit assignment is
-duration-aware (discounting by elapsed game time, not decision count).
+The agent picks one **macro-action** per turn from a menu the harness builds (things
+like `craft(stone_pickaxe)`, `fight(zombie)`, `drink_water`, `descend`). A scripted
+controller executes the choice. The question is what should do the picking, and the
+plan runs in five stages:
 
-The program, end to end:
+1. **The matched-budget comparison** *(done — results below)*. Four pickers, 3,200
+   training decisions each: a frozen LLM, a PPO-fine-tuned LLM, a from-scratch world
+   model, and the world model distilled back into the LLM.
+2. **Floor transfer and few-shot adaptation** *(done for floor 1)*. Drop everyone in
+   the dungeon. Who transfers? Who adapts fastest with a little local experience?
+3. **Distillation** *(running)*. Merge the LLM's deep game knowledge with the world
+   model's learned survival skills into one policy.
+4. **Full-depth training** *(ahead)*. Extend training beyond the surface floor using
+   the saved-state curriculum, toward all nine floors.
+5. **Long-horizon credit assignment** *(ahead — the reason this project exists)*.
+   Once trajectories run deep, use exact save-and-branch replay to answer "which
+   decision 200 steps ago made this diamond possible?" — and test whether that beats
+   standard advantage estimation.
 
-1. **Matched-budget comparison of knowledge sources** *(complete — results below)*:
-   frozen LLM planner vs. PPO+GAE-finetuned LLM vs. from-scratch world-model planner
-   vs. teacher-distilled LLM, each given exactly 3,200 environment decisions.
-2. **Floor transfer and few-shot adaptation** *(complete for floor 1)*: how does each
-   system's knowledge survive a distribution shift it never trained on, and how fast
-   does each convert new experience into behavior change?
-3. **Knowledge-union distillation** *(designed — [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md))*:
-   merge the LLM's tech-tree prior with the world model's learned survival competence
-   without importing either side's failure modes.
-4. **Full-depth training and evaluation** *(ahead)*: extend training beyond the surface
-   via the snapshot-bank curriculum (floor-entry states are banked and restorable
-   exactly, RNG and all), toward training and evaluating across all nine floors.
-5. **Long-horizon credit assignment beyond GAE** *(ahead — the program's namesake)*:
-   once deep, diverse trajectories exist, use the exact branch-and-replay machinery to
-   compute counterfactual credit — "which decision 200 steps ago made this diamond
-   possible?" — and test whether it improves on standard advantage estimation. The
-   infrastructure (exact state/RNG/memory snapshotting, paired branching) is built and
-   already powers the transfer studies.
+Full details and rationale: [project_report.md](project_report.md) (the readable
+story)
 
-Full design rationale: [REVISED_RESEARCH_PLAN.md](REVISED_RESEARCH_PLAN.md).
-Living lab notebook: [PROGRESS.md](PROGRESS.md).
-Narrative report of results so far: [project_report.md](project_report.md).
+## Results so far
 
-## Current results
+### 1. Given equal experience, the from-scratch world model wins
 
-### 1. Under a matched budget, the from-scratch world model beats the LLM — on its training distribution
+60 paired evaluation worlds, 3,200 training decisions per system, identical menus,
+one shared evaluator:
 
-60 paired evaluation worlds · matched 3,200-decision training budgets (audited exactly) ·
-identical grounded action space · one shared evaluator · paired bootstrap.
-
-| system | reward | achievements | survival | vs FROZEN |
+| system | reward | achievements | survival | vs frozen |
 |---|---:|---:|---:|---|
 | **World-model planner** (from scratch, no LLM, ~0 GPU) | **10.61** | **10.6** | **90%** | **+3.32, p<0.001** |
-| PPO+GAE-finetuned LLM (Qwen3-4B + LoRA, 3.2 GPU-h) | 7.66 | 8.5 | 52% | +0.36, p=0.22 n.s. |
-| Frozen LLM planner (Qwen3-4B) | 7.29 | 8.1 | 48% | — |
-| Distilled (teacher → LLM) | *designed, not yet run* | | | |
+| PPO-fine-tuned LLM (Qwen3-4B, 3.2 GPU-h) | 7.66 | 8.5 | 52% | +0.36, not significant |
+| Frozen LLM (Qwen3-4B) | 7.29 | 8.1 | 48% | — |
 
-PPO on this budget is statistically indistinguishable from not training at all — a
-carefully-measured null result (n=60, MDE ≈ 0.9).
+A small model with random-weight beginnings beats a 4-billion-parameter pretrained
+planner on every metric — and PPO on this budget is statistically indistinguishable
+from not training at all.
 
-### 2. The systems know different things — and die where their knowledge comes from elsewhere
+### 2. But they know different things — and each dies of what it doesn't know
 
-- The LLM planners execute the deep tech chain out of the box — wood → stone → **iron**
-  (14/60 worlds) — because the pretrained prior already contains Minecraft's tech tree.
-  The from-scratch planner never discovers iron on the surface: its exploration never
-  completes the chain to reach ore.
-- The LLM planners **die of thirst** (55 dehydration deaths across two arms, ~zero
-  `drink` actions) — Minecraft has no thirst meter, and 3,200 decisions of PPO did not
-  patch the hole in the prior. The world model *learned* the meters and survives 90%.
-- One floor down, in a dungeon neither trained on, the roles invert exactly: the world
-  model's surface-learned habit (sleep at low energy — safe above ground) becomes its
-  leading cause of death, while the LLM prior, which lacks the sleep mechanic entirely,
-  transfers better. **Each system dies precisely where its knowledge's origin diverges
-  from the world it is standing in.**
+- The LLMs execute the deep tech chain out of the box (iron in 14 of 60 worlds)
+  because Minecraft folklore contains that chain. The world model never found iron on
+  the surface: its exploration never got there.
+- The LLMs also **die of thirst** — Minecraft has no thirst meter, and 3,200
+  decisions of PPO didn't fix the blind spot. The world model learned the meters this
+  game actually has, and survives 90% of episodes.
+- One floor down, in a dungeon nobody trained on, the pattern flips exactly. The
+  world model's surface habit — sleep when tired, safe up there — becomes its top
+  cause of death in a monster-filled dungeon. The LLM prior has no sleep habit and so
+  cannot make that mistake. **Each system dies exactly where its knowledge came from
+  somewhere else.**
 
-### 3. Adaptation speed is itself a world-model advantage
+### 3. Given a little dungeon experience, the world model adapts ~10× faster
 
-Given 400 dungeon decisions to adapt (few-shot, matched across arms), the world-model
-planner unlearns the lethal sleep habit (deaths 22→8), acquires the whole dungeon
-economy — coal, furnaces, potions, bows, **iron in 7/40 and diamond in 3/40 worlds** —
-and nearly triples its floor-1 reward (4.81 → 13.46, p<0.001), with zero forgetting on
-the surface. One KL-bounded PPO step on the same 400 decisions leaves the LLM's
-behavior almost unchanged. **Per decision of experience, the model-based system
-converts evidence into behavior change roughly an order of magnitude faster** — model
-refit vs. trust-region policy step is a structural difference between the schools.
+Both learners got 400 dungeon decisions and one standard update. The world model
+nearly tripled its dungeon score (4.81 → 13.46, p<0.001), unlearned the fatal sleep
+habit, and picked up the whole dungeon economy — coal, furnaces, potions, bows,
+**iron, diamond** — with zero forgetting of its surface skills. The same 400
+decisions moved the LLM barely at all: PPO's trust region (the rule that limits how
+far the policy can move per update) tripped after a single 16-state step. The data
+was equally good; the difference is how much of it each system can *absorb*.
+Learning facts and re-planning has no speed limit; a policy gradient must move
+slowly to stay valid.
 
-The floor-1 result also resolves *why* the surface iron gap exists: with ore actually
-exposed one floor down, 400 decisions sufficed — so the gap is about the long chain to
-**reach** ore, not about valuing it. That is a credit-assignment/exploration finding,
-and it is what stages 4–5 of the program attack.
+## Why you can trust the comparison
 
-## Why the comparison is fair (the part that took the longest)
+Most "A beats B" agent results fall apart when you look closely. The guardrails here:
 
-Most "A beats B" agent comparisons die on inspection. The fairness contract
-([docs/METRICS.md](docs/METRICS.md)) holds constant: interaction budget (3,200
-decisions per arm, audited to the unit from each run's own transition files), action
-space (one menu constructor for all systems, with the invariant "offered ⟹ doable"),
-evaluation worlds (paired seeds), evaluator code (one script for every system), and
-the exploration floor (ε=0.05 mirrored across learned arms). Version stamps on every
-data file make cross-version comparisons a **fatal preflight error**.
+- **Matched budgets, audited.** 3,200 decisions per arm, counted from each run's own
+  log files.
+- **One action menu for everyone**, with the rule "if it's offered, it can be done."
+  Menu versions are stamped into every data file; comparing across versions is a
+  hard error, not a footnote.
+- **One evaluator, paired worlds, real statistics.** Paired bootstrap on 60 worlds;
+  every comparison reports the smallest effect it could detect. Four early "trends"
+  died when the evaluation was properly powered — they are documented, not buried.
+- **Predictions written down before each run.** Two of the most useful results in
+  the report are negative ones that pre-registration forced into view.
+- **Checks before compute.** A dozen-plus gate scripts (menu correctness, reward
+  exactness, gradient correctness, evaluator consistency) must pass before a run is
+  allowed to spend budget.
+- **A test set nobody has touched.** All results are development-set; 80 held-out
+  worlds get spent once, at the end.
 
-Deliberately *not* matched, and reported instead: mechanism and compute. The LLM arms
-inherit an internet-scale prior and spend ~376M tokens + 3.2 GPU-h; the world model
-trains from zeros in CPU minutes. The from-scratch system winning *despite* that
-asymmetry is what makes the result interesting.
+What is deliberately *not* matched: starting knowledge and compute. The LLM begins
+with an internet-scale prior and spends GPU-hours; the world model begins with random
+weights and trains in CPU minutes. That asymmetry is the subject of the study.
 
-Measurement discipline that turned out to be load-bearing:
-
-- **Powered evals** — at n=10 worlds, four separate "trends" appeared and died at n=60;
-  every reported comparison carries its minimum detectable effect.
-- **Pre-registered readouts** before each run; negative results (an honest reward head
-  made things *worse* — the report's bias-variance section) reported with the same
-  prominence as wins.
-- **Gates before compute** — every mechanism (menu grounding, reward-head exactness,
-  PPO gradient path, evaluator consistency, model-exploitation detection) has an
-  executable gate that must pass before budget is spent on it.
-
-## What's in the box
+## What's in the repo
 
 ```
-harness/        Craftax as a text game: verified renderer, fog-of-war, 17 scripted
-                skills, executor with shared affordance predicates, grounded menu
-                constructor ("offered ⟹ doable")
-rl/             Semi-MDP returns/GAE (duration-aware discounting), PPO core,
+harness/        Craftax as a text game: verified renderer, fog of war, 17 scripted
+                skills, and the grounded menu constructor
+rl/             semi-Markov returns and GAE (time-aware discounting), PPO core,
                 budget ledger — unit-tested against hand-computed references
-models/         Typed-head macro world model, 3-member bootstrap ensemble,
-                compositional reward head (hard achievement masking + empirical-
-                Bayes shrinkage), continuation-value network
-planner/        Teacher planner: Thompson sampling to collect, LCB (μ−κσ) to deploy
-exploration/    Snapshot bank: exact save/restore of env+RNG+memory — the substrate
-                for floor curricula and counterfactual credit assignment
-scripts/        Drivers for every arm, 12+ gate scripts, verdict/budget/exploitation
-                auditors
-eval/           Paired-bootstrap statistics; one evaluator for all systems
-docs/           METRICS.md (measurement contract), LESSONS.md (15 engineering rules
-                this project paid for), DISTILL_DESIGN.md, ACTION_INTERFACE.md
+models/         the typed world model, ensemble, reward head with achievement
+                masking and shrinkage, value network
+planner/        the teacher: Thompson sampling to explore, pessimistic scoring to act
+exploration/    snapshot bank — exact save/restore of game+RNG+memory, the substrate
+                for the dungeon studies and future counterfactual credit assignment
+scripts/        drivers for every experiment, gate scripts, verdict and audit tools
+eval/           paired-bootstrap statistics; one evaluator for all systems
+docs/           METRICS.md (the measurement contract), LESSONS.md (15 hard-won
+                engineering rules), DISTILL_DESIGN.md, ACTION_INTERFACE.md
 ```
 
-## Reproducing
+## Running it
 
 ```bash
-python -m venv env && env/bin/pip install -r requirements.txt   # CPU env (game, RL, WM)
-# GPU env additionally needs: vllm, peft, transformers (LLM arms only)
+python -m venv env && env/bin/pip install -r requirements.txt   # CPU env (game, RL, world model)
+# the LLM arms additionally need a GPU env with: vllm, peft, transformers
 
-# gates (seconds–minutes each, CPU):
+# quick checks (CPU, seconds to minutes):
 python scripts/preflight.py --help          # comparability preflight
 python scripts/reward_head_demo.py          # reward-head exactness gate
 
-# the arms:
+# the main experiments:
+bash scripts/run_s6_teacher.sh              # world-model teacher (CPU, ~2 h)
 bash scripts/run_s3_ppo.sh                  # PPO loop (GPU, ~8 h)
-bash scripts/run_s6_teacher.sh              # teacher loop (CPU, ~2 h)
-bash scripts/s11_fewshot_teacher.sh         # floor-1 few-shot arm (CPU, ~1 h)
-python scripts/m5_verdict.py --teacher ... --frozen ...   # paired verdict
+bash scripts/s11_fewshot_teacher.sh         # dungeon few-shot arm (CPU, ~1 h)
+python scripts/m5_verdict.py --teacher ... --frozen ...   # paired statistics
 ```
 
 ## Honest caveats
 
-- Dev-set results (seeds 40–99). A pristine 80-world test set (seeds 100–179) is
-  reserved and unspent pending the final roster.
-- One training seed per arm so far; training-seed variance is unmeasured. The headline
-  teacher-vs-FROZEN gap is p<0.001; one internal ablation rung sits at p=0.050.
-- Training so far is surface-floor; floor-1 results are transfer/few-shot studies.
-  Full-depth training (stage 4) and counterfactual credit assignment (stage 5) are the
-  program's open half.
-- Single environment, single model size (4B), 40-turn episodes. Claims are scoped to
-  this regime.
+- Development-set results (seeds 40–99); the test set (100–179) is reserved and
+  unspent.
+- One training seed per arm so far. The headline is p<0.001, but one internal
+  ablation rung sits at p=0.05; a second seed comes before any strong claim.
+- Training so far is surface-floor only; the dungeon results are transfer and
+  few-shot studies. Stages 4–5 are the open half of the program.
+- One game, one model size (4B), 40-turn episodes. Findings here are hypotheses
+  anywhere else.
+
+## Where to read next
+
+1. [project_report.md](project_report.md) — the full story: motivation, design,
+   results, lessons
+2. [PROGRESS.md](PROGRESS.md) — the running lab notebook (denser, has every ablation)
+3. [docs/METRICS.md](docs/METRICS.md) — the pre-registered measurement contract
+4. [docs/LESSONS.md](docs/LESSONS.md) — 15 engineering rules this project paid for
