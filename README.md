@@ -152,6 +152,5 @@ python scripts/m5_verdict.py --teacher ... --frozen ...   # paired statistics
 
 1. [project_report.md](project_report.md) — the full story: motivation, design,
    results, lessons
-2. [PROGRESS.md](PROGRESS.md) — the running lab notebook (denser, has every ablation)
-3. [docs/METRICS.md](docs/METRICS.md) — the pre-registered measurement contract
-4. [docs/LESSONS.md](docs/LESSONS.md) — 15 engineering rules this project paid for
+2. [docs/METRICS.md](docs/METRICS.md) — the pre-registered measurement contract
+3. [docs/LESSONS.md](docs/LESSONS.md) — 15 engineering rules this project paid for
