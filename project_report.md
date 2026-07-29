@@ -1,5 +1,4 @@
 # Project report: LLM priors vs. learned world models on Craftax
----
 
 ## 1. Motivation
 
@@ -10,7 +9,8 @@ There are two common answers to "how should an agent get good at an environment?
 2. **Learn a model of the environment.** Predict what actions do, plan against those
    predictions, and let interaction be the source of competence.
 
-This project puts both approaches in the same harness, on the same benchmark, with the same budget, and asks one narrow question:
+This project puts both approaches in the same harness, on
+the same benchmark, with the same budget, and asks one narrow question:
 
 > **Given exactly 3,200 environment decisions to learn from, does a world model
 > trained from scratch beat a frozen pretrained LLM planner? And does it beat the
@@ -19,7 +19,8 @@ This project puts both approaches in the same harness, on the same benchmark, wi
 The testbed is **Craftax** (the full version). It is a 2D survival game in the
 Minecraft family: a tech tree that runs from wood to stone to iron to diamond,
 hunger/thirst/energy/health meters, day and night, hostile monsters, and a dungeon
-with nine floors. 
+with nine floors. Two properties make it a good testbed. It is hard enough that
+neither approach wins trivially. 
 
 This comparison is stage one of a larger program (the README has the roadmap). The
 same infrastructure is built to eventually support training and evaluation across all
@@ -156,6 +157,13 @@ same time. Second: **PPO on this budget is statistically indistinguishable from 
 training at all.** An earlier version of this project reported a significant PPO gain;
 under the corrected action menu and the properly powered evaluation, that effect does
 not reproduce.
+
+The teacher's row has since been replicated. A second teacher, trained from scratch
+with a different random seed on the same recipe, scored 11.75 reward, 11.9
+achievements, and the same 90% survival — again beating FROZEN at p<0.001 on all
+three metrics. The two seeds differ from each other by about one reward point, which
+is a real (and now measured) training-seed variance, but the headline does not
+depend on which seed you look at.
 
 ### 3.2 How the teacher got there: one change at a time
 
@@ -310,13 +318,41 @@ what prevents it from adapting quickly somewhere new.
 
 ---
 
-## 4. Limitations
+## 4. What it took to measure this
+
+The results took about a third of the effort. The other two thirds went into making
+them measurable, and the failures along the way are part of what this project has to
+offer ([docs/LESSONS.md](docs/LESSONS.md) has the full list):
+
+- **Audit what the budget actually bought.** The teacher's first "failure" turned out
+  to be 61% of its budget spent on do-nothing actions. The fix was in the action
+  menu, not the learner. Every diagnosis since starts with "what did this system's
+  budget actually buy?"
+- **One rule, one function.** Craftax reports death one step *late*, so every
+  decision loop needs the same guard. It existed in five copies; the one copy that
+  was missing it charged 81 post-death decisions to one arm and wrote corpse-state
+  rows into its training data. The rule now lives in exactly one function, and a
+  consistency check asserts every loop calls it.
+- **Instrument before verdict.** Four early "trends" died when the evaluation grew
+  from 10 worlds to 60. A comparison that doesn't know its own detection threshold
+  is a mood, not a measurement.
+- **When a number surprises you, suspect the measurement first.** It was the
+  measurement, repeatedly: a budget ledger that couldn't tell runs apart, a resumed
+  log read as a fresh one, a timing window dominated by server startup.
+
+---
+
+## 5. Limitations
 
 - **These are development-set results.** The 80 held-out test worlds are still
   untouched and will be spent once, at the end.
-- **One training seed per arm.** Run-to-run training variance is unmeasured. The
-  headline result is p<0.001, but one internal rung of the ablation ladder sits
-  right at p=0.05; a second seed is queued before any publication-grade claim.
+- **Two training seeds for the teacher; one for everything else.** A second
+  independently trained teacher reproduced the headline (11.75 reward vs. the first
+  seed's 10.61; each beats FROZEN at p<0.001 on all three metrics). The two seeds
+  differ by ~1.1 reward (p=0.022), which is the first real estimate of training-seed
+  variance — and a reason to keep reading internal ablation rungs of similar size
+  with caution: one of them sits right at p=0.05, inside that between-seed spread.
+  The PPO arm still has a single training seed.
 - **One game, one model size, 40-turn episodes.** The bias-variance and symmetry
   findings are results here and hypotheses anywhere else.
 - **The action menu does real work.** Every system benefits from the grounded menu
@@ -325,17 +361,18 @@ what prevents it from adapting quickly somewhere new.
 - **Training so far happens on the surface floor.** The dungeon results are transfer
   and few-shot studies. Full multi-floor training hasn't started yet.
 
-## 5. Status and next steps
+## 6. Status and next steps
 
 Against the roadmap in the README:
 
-- **Stage 1 — the matched-budget comparison: done** (sections 3.1–3.3, 3.5). Still
-  owed: a second training seed and the one-shot test-set run.
+- **Stage 1 — the matched-budget comparison: done** (sections 3.1–3.3, 3.5). The
+  second training seed is done and replicates (section 3.1). Still owed: the
+  one-shot test-set run.
 - **Stage 2 — floor transfer and few-shot adaptation: done for floor 1**
   (sections 3.4, 3.6), with both pre-registered predictions resolved.
 - **Stage 3 — distillation: running now.** The adapted teacher is the source — its
   dungeon habits are no longer lethal, which removes the main risk of teaching them
-  to the LLM. 
+  to the LLM. Design in [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md).
 - **Stage 4 — full-depth training** using the saved-state curriculum. One
   prerequisite queued first: the exploration upgrade for the surface discovery gap,
   now well-motivated — the few-shot result proved the teacher learns deep resources
@@ -345,6 +382,7 @@ Against the roadmap in the README:
   producing trajectories deep enough to need it.
 
 ---
+
 ## Appendix: the three core designs, precisely
 
 The main text describes *what* was built and *why*. This appendix walks through the
@@ -375,7 +413,39 @@ before any system knows whether opening it pays off. Keeping those two things
 separate is what makes "learning to use an affordance" measurable at all, as
 something distinct from "being shown it".
 
-A few design decisions keep those invariants true in practice.
+#### What is on the menu, and what puts it there
+
+Here is the complete set of macro-actions and the condition each one has to meet.
+"Reachable" throughout means *the agent has seen the tile and a walking path to it
+exists in its own map memory* — not merely that the thing is on screen.
+
+| action | offered when… | the reason for the condition |
+|---|---|---|
+| `explore`, `explore(up/down/left/right)` | always | the guaranteed fallback, so the menu is never empty |
+| `open_chest` | a chest has been seen and is reachable | availability only; nothing is implied about the loot |
+| `descend` | a down-ladder is reachable **and** ≥ 8 monsters have been killed on this floor | the game itself refuses the descent below the quota, so offering it earlier would put an impossible action on the menu |
+| `ascend` | an up-ladder has been seen and is reachable | |
+| `drink_water` | water or a fountain is reachable **and** the drink meter is not full | drinking at a full meter consumes zero game steps and returns nothing |
+| `eat(plant)` | a ripe plant is reachable **and** the food meter is not full | same zero-step problem |
+| `sleep` | energy is not full | sleeping at full energy does nothing — the single defect that consumed 61% of a training budget |
+| `fight(passive)` | a cow, bat or snail is reachable | hunting. Deliberately *not* gated on hunger: the kill is legal at any food level, and whether it is worth a decision is the policy's judgment |
+| `fight`, `fight(melee)`, `fight(ranged)` | a hostile of that class is reachable | reachable, not just visible — a zombie behind a wall can be seen but never approached, so the skill would spend zero steps |
+| `mine(resource)` | a deposit is reachable **and** the held pickaxe is good enough | Craftax gates ore by tool tier: wood needs no pickaxe, stone and coal need a wood one, iron needs stone, diamond needs iron, sapphire and ruby need diamond |
+| `go_to(crafting_table)`, `go_to(furnace)` | the station is remembered and reachable but not adjacent | without this, an agent with one wood and a table ten tiles away had *no* path to any craft — it would have had to gather three wood and build a second table |
+| `craft(item)` | every material is held — **including** the two wood for a crafting table this call would have to place — **and** the result would actually be an upgrade | charging only the recipe made 30% of all decisions impossible crafts; tools are tiered, so re-crafting a tier you already hold is a silent no-op |
+| `place(item)` | the material is held **and** the tile the agent faces will accept it | a plant needs *grass* specifically, not merely an empty tile — that one rule was 7 of 11 observed failures |
+| `collect_sapling` | grass is reachable | |
+| `shoot` | a bow and at least one arrow are held | |
+| `read_book` | a book is held | |
+| `drink_potion` | a potion is held | |
+| `enchant(sword/armour/bow)` | an enchantment table is reachable, the item is held, mana ≥ 9, **and** the held gem matches that table's element (fire wants ruby, ice wants sapphire) | four separate conditions; checking only the first three still yields a zero-step action |
+
+Craft and place draw from fixed shortlists — the progression spine (wood/stone/iron
+pickaxes and swords, torches, arrows) and the five placeable items — rather than
+every recipe in the game, so one satisfiable recipe family cannot crowd out the rest
+of the menu.
+
+A few design decisions keep the two invariants true in practice.
 
 The constructor only reads what the agent has seen. Every predicate works from the
 agent's own memory of explored tiles, plus one shared reachability map computed from
@@ -423,64 +493,155 @@ predicted.
 *`models/macro_world_model.py`, including the ensemble; retrained each round on the
 teacher's own experience.*
 
-The model answers one question: *if I take this action here, what happens?* It is
-one-step and direct — no learned latent space:
+The model answers one question: *if I take this action from this state, what
+happens?* Answering it well is what lets the teacher plan without ever consulting a
+language model — it can score all twelve menu options by imagining each one, instead
+of having to try one and find out.
+
+It is deliberately a **one-step, direct** model: it predicts the situation after the
+whole macro-action finishes, in the same feature space it took as input. There is no
+learned latent space and no multi-step rollout. That is a real limitation, honestly
+stated — the model cannot see six decisions ahead, and section 3 reports a
+measurement where exactly that shows up — but it buys something valuable: the
+predictions are in human-readable units, so when the planner does something strange
+you can look directly at what it believed would happen.
 
 $$M_\psi(x_t, a_t) \rightarrow (\hat{x}_{t+1},\ \hat{r}_t,\ \hat{\tau}_t,\ \hat{d}_t,\ \hat{y}_t)$$
 
-The input is the current state $x$ (132 typed features) and a candidate action $a$
-(a 61-dimensional encoding: skill one-hot plus arguments — append-only, because
-inserting a dimension would silently re-label every row of existing data). The
-outputs: the next state, the reward, how many game steps the action will take, the
-probability it ends in death, and the probabilities of 72 named events. A shared
-2×256 MLP trunk feeds a separate prediction head per feature *type*:
+**What goes in.** The state $x$ is 132 numbers describing everything the agent can
+legitimately know:
 
-| feature type | prediction | loss |
+| group | examples | count |
 |---|---|---|
-| continuous | residual in normalized units | Huber |
-| count | residual on the `log1p` scale | Huber |
-| binary | logit | BCE |
-| categorical | per-field softmax | CE |
-| duration $\hat{\tau}$ | `log1p` scale | Huber |
-| death $\hat{d}$ | logit (true termination only — truncation is not death) | BCE |
-| events $\hat{y}$ | one logit per event | BCE |
+| body and status | health, food, drink, energy, whether asleep | ~6 |
+| inventory and tools | pickaxe tier, sword tier, bow, armour pieces, potions, books | ~7 |
+| the achievement set | one flag per achievement: *have I already unlocked this one?* | 67 |
+| what is visible | water, hostiles, passive mobs, ladders, and the distance to each | ~10 |
+| exploration state | tiles seen, fraction explored, reachable tiles, whether standing in the dark | ~6 |
+| position in the game | floor, facing direction, monsters killed here, floor cleared | ~5 |
+| what just happened | the previous skill, its outcome, its duration, its reward | ~8 |
+| adjacency | standing next to a crafting table, next to a furnace | 2 |
 
-Two parameterization choices do most of the work here. Typing the heads prevents a
-model from looking accurate on average while being useless per field — a skill-id
-code and a distance are not the same kind of number, and should not share a loss.
-And predicting *changes* rather than next values exploits the fact that most
-features do not move on most actions: "nothing happened" becomes the zero-effort
-default, so the model's capacity flows to what actually changed.
+The 67 achievement flags are the least obvious group and the most important. Craftax
+pays for each achievement exactly *once*, so the true reward function depends on
+which ones are already spent. An earlier version carried only the achievement
+*count*, which made two states with the same count but different sets look
+identical — and the reward head was then mathematically forced to give the same
+answer where the truth differed by a full point. The consequences were exactly as
+bad as that sounds: the model kept predicting about +0.9 for collecting a sapling
+long after that reward was spent, and the teacher farmed it 471 times across 60
+worlds. The value network, denied the variable that actually explained the reward,
+latched onto whatever correlated with time instead and concluded that *holding wood
+is bad* and *low energy is good*. Adding the set fixed the reward head and the value
+network in one change. None of this is privileged information: the agent unlocked
+those achievements itself.
 
-**The reward head is assembled, not learned end-to-end.** Craftax's reward genuinely
-*is* a sum: each first-time achievement pays a known constant $c_k$, plus a small
-health term. So instead of asking a network to regress that sum, the model predicts
-each achievement's unlock probability and composes the reward from the pieces:
+The action $a$ is a 61-dimensional encoding — a one-hot for which skill, plus typed
+slots for its arguments (which resource, which item, which direction, which target)
+and a scalar count. The layout is strictly **append-only**. New action types are
+added at the end, never inserted, because inserting one shifts every later index and
+would silently re-label every row of previously collected data — the model would
+decode old experience as the wrong skills entirely, and nothing would crash.
+
+**What comes out.** Five predictions: the next state, the reward, how many game steps
+the action will consume, whether it ends in death, and 72 named events. The events
+are 67 "did achievement *k* unlock on this action?" flags plus five general ones —
+a chest opened, the floor went down, the floor went up, the action succeeded, and
+whether *any* achievement unlocked at all. That last one turns out to matter; it
+becomes the pooled prior in the reward head below.
+
+**How it is built.** A shared 2-layer, 256-unit MLP trunk feeds a separate prediction
+head for each *type* of thing being predicted:
+
+| feature type | what the head predicts | loss |
+|---|---|---|
+| continuous (health, distances) | the change, in normalized units | Huber |
+| counts (inventory, tiles seen) | the change, on a `log1p` scale | Huber |
+| binary flags | a logit | cross-entropy |
+| categorical (direction, floor) | a softmax per field | cross-entropy |
+| duration $\hat{\tau}$ | `log1p` of the step count | Huber |
+| death $\hat{d}$ | a logit — true death only, never a truncated episode | cross-entropy |
+| events $\hat{y}$ | one logit per event | cross-entropy |
+
+Two choices here do most of the work. **Typing the heads** stops a model from looking
+accurate on average while being useless where it counts: a facing-direction code and
+a distance in tiles are not the same kind of number and must not share a loss
+function. **Predicting changes rather than next values** exploits the fact that most
+of the 132 features do not move on any given action — inventory does not change when
+you walk. That makes "nothing happened" the zero-effort default and pushes the
+model's capacity onto whatever actually moved. The `log1p` scale for counts handles
+both ends of a wide range at once: spending three wood down to zero, and a
+step counter in the thousands.
+
+**The reward head is assembled, not learned end-to-end.** This is the part of the
+design with the most thought behind it, so it is worth stating the reasoning before
+the formula.
+
+Craftax's reward is not a mystery function to be approximated. It genuinely *is* a
+sum: each achievement, the first time you unlock it, pays a constant that we can
+read straight out of the game's source, plus a small term for health changes. A
+naive design asks a network to regress that sum from scratch, which throws away the
+structure and forces the model to rediscover — from a few thousand examples — a
+formula we already know exactly.
+
+So instead the model predicts the *ingredients* (how likely is each achievement to
+unlock if I take this action?) and the reward is assembled from them using the game's
+own coefficients:
 
 $$\hat{r} \;=\; \underbrace{\sum_k w_k\, \hat{p}_k\, c_k}_{\text{sharp, per-achievement}} \;+\; \underbrace{\hat{p}_{\text{any}} \cdot \frac{\sum_k (1-w_k)\, c_k\, \mathbb{1}[\text{locked}_k]}{\#\text{locked}}}_{\text{pooled prior on the untrusted mass}} \;+\; 0.1\,\widehat{\Delta\text{health}}$$
 
-Three properties of this formula each carry real weight.
+Reading it left to right: the first term is the model's own per-achievement belief,
+the second is a fallback for achievements it has barely seen, and the third is the
+health term. Three properties of this arrangement each carry real weight.
 
-The mask makes the model exact where the game is exact. An achievement that is
-already unlocked pays nothing — that is a rule of the game, so $\hat{p}_k$ is forced
-to zero by the architecture rather than left for training data to teach. Before the
-mask existed, the planner chased already-spent achievements 471 times per 60 worlds.
+**The mask makes the model exact where the game is exact.** An achievement already
+unlocked pays nothing, ever. That is a rule, not a pattern, so $\hat{p}_k$ is forced
+to zero by the architecture whenever the corresponding input flag is set — the
+network's learned opinion only gets consulted for achievements still available. The
+alternative is hoping the network infers the rule from data, and we know what that
+costs: before the mask, the planner chased already-spent achievements 471 times
+across 60 worlds.
 
-The shrinkage weights handle rare events honestly. Each achievement's own prediction
-is trusted in proportion to how much data it has: $w_k = n_k / (n_k + 10)$, computed
-from training counts at fit time. An achievement seen five times leans mostly on the
-pooled prior; one seen hundreds of times stands on its own evidence. The prior
-retires itself as counts grow — and this is the single change worth +3.3 reward in
-section 3.2.
+**The shrinkage weights handle rare events honestly.** Here is the problem they
+solve. With only 3,200 decisions of experience, some achievements have hundreds of
+examples and others have five. A per-achievement head with five examples predicts
+near-zero simply for lack of evidence — and a planner that believes coal is
+worthless never mines coal, so coal stays at five examples forever. The error seals
+itself in, because a planner chooses its own future training data.
 
-And there is a built-in lie detector. A plain scalar reward head trains in parallel
-but is never used for planning. If the composed and scalar predictions drift apart
-beyond the expected slack, the `REWARDHEAD` gate fails loudly — mislabeled targets
-cannot pass silently.
+The fix is to trust each head in proportion to how much it has seen:
+$w_k = n_k/(n_k + 10)$, computed from the training counts when the model is fit. An
+achievement seen 5 times gets weight 0.33 and leans mostly on the pooled fallback;
+one seen 200 times gets 0.95 and stands on its own evidence. The leftover weight
+$(1-w_k)$ is carried by that "did *anything* unlock?" event — a much easier
+prediction, since every achievement's data contributes to it — spread across the
+achievements still locked. So a rarely-seen achievement inherits a sensible generic
+optimism instead of a confident zero. And because $n_k$ grows every round, $w_k$
+climbs toward 1 on its own: the fallback quietly retires itself wherever real
+evidence arrives. This is the single change worth +3.3 reward in section 3.2.
+
+**And there is a built-in lie detector.** A plain scalar reward head is trained
+alongside the assembled one and never used for planning. Its only job is
+disagreement: if the composed prediction and the scalar prediction drift apart
+beyond the slack expected from within-action discounting, something is wrong with
+the labels or the wiring, and a gate fails loudly. A model that is confidently wrong
+in both halves at once is far less likely than one that is wrong in one.
+
+**The value network.** The reward head only sees one action ahead. What makes
+planning possible is a second small network, $V_\omega$, trained to predict the
+discounted return from a state — so the planner can ask "what is the situation I end
+up in worth?" rather than only "what does this action pay right now". It is refit
+from scratch every round, because it estimates the value of states *under the
+current policy*, and the policy changes every round. A stale value function is one of
+the easier ways to make a model-based agent chase its own tail.
 
 **The ensemble, and its two rules.** Three copies of the model are trained on
-bootstrap resamples of the data. To score a candidate action $a$, each copy $m$
-computes
+different bootstrap resamples of the same data. Where they agree, the data has
+spoken clearly; where they disagree, the model is guessing. That spread is the
+teacher's only sense of its own ignorance, and both of the rules below are built on
+it.
+
+To score a candidate action $a$, each copy $m$ computes
 
 $$Q_m(h,a) \;=\; \hat{r}_m(h,a) \;+\; \gamma^{\max(\hat{\tau}_m,\,1)} \cdot \big(1-\hat{d}_m(h,a)\big) \cdot V_\omega\big(\hat{x}'_m(h,a)\big)$$
 
@@ -497,10 +658,27 @@ exploration rather than random jitter. (Resampling every decision sounds more
 thorough and is actually worse: it averages the members out, which looks like
 exploration while exploring strictly less.) An ε = 0.05 random floor, mirrored to
 PPO's, sits on top. During evaluation, the planner switches to the pessimistic rule
-$\arg\max_a\, (\mu_Q - \kappa U)$ with κ = 0.5. Reporting a collection-mode run as
-"the planner's score" would count the exploration bonus as skill — and conflating
+$\arg\max_a\, (\mu_Q - \kappa U)$ with κ = 0.5 — preferring an action it is confident
+about over one that merely *might* be brilliant. Reporting a collection-mode run as
+"the planner's score" would count the exploration bonus as skill, and conflating
 these two rules is, in our experience, the main way a model-based result gets
 overstated.
+
+**How it all trains.** The teacher starts genuinely from nothing: three randomly
+initialized networks that disagree about everything, which makes its first decisions
+effectively arbitrary. It then repeats a simple loop eight times, spending 400 of its
+3,200 decisions per round:
+
+1. **Play.** Collect 400 decisions on the training worlds under the Thompson rule.
+2. **Refit the world model.** Retrain all three copies on everything collected so
+   far, with fresh bootstrap resamples. The shrinkage weights $w_k$ are recomputed
+   here, so they tighten automatically as evidence accumulates.
+3. **Refit the value network** against the updated model and the new data.
+
+Nothing is carried between rounds except the data — models are refit rather than
+fine-tuned, which is affordable precisely because they are small. The whole eight
+rounds take minutes of CPU and no GPU at all. That the resulting agent beats a
+4-billion-parameter language model on this task is the headline of section 3.1.
 
 ### A.3 Semi-Markov PPO + GAE
 
@@ -585,3 +763,9 @@ specific way to get that sharing wrong that produces *perfectly correct scores* 
 silently wrong gradients. The gate builds that broken version on purpose and asserts
 the real path measurably differs from it — a class of check that comparing outputs
 can never provide.
+
+---
+
+*Every number in this report is reproducible from the repo. Each table has a driver
+script, each claim has a check or verdict script, and each run's budget is counted
+from its own log files. [PROGRESS.md](PROGRESS.md) is the running lab notebook.*
