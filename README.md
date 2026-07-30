@@ -3,12 +3,17 @@
 **If a pretrained language model and a world model built from scratch get exactly the
 same amount of game experience, which one plays better?**
 
-This repo runs the comparison inside one harness, and then follows the result somewhere more interesting than the scoreboard.
+That question is usually answered across different papers, with different budgets,
+different action sets, and different evaluation protocols — which makes the answers
+hard to compare and easy to over-read. This repo runs the comparison inside one
+harness, and then follows the result somewhere more interesting than the scoreboard.
 
 The game is [Craftax](https://github.com/MichaelTMatthews/Craftax) (full version): a
 2D survival game in the Minecraft family, with a tech tree running from wood to
 diamond, meters for hunger, thirst and energy, monsters, and a nine-floor dungeon
-underneath. 
+underneath. It has one property that ended up shaping every result here — a language
+model already "knows" part of this game from Minecraft folklore (the tech tree), and
+has never heard of the rest (the thirst meter, the dungeon).
 
 Everything in this repo — the environment harness, the agent, the RL training, the
 world model, and the evaluation statistics — was built and run end to end as one
@@ -34,10 +39,14 @@ good at it, and everything else about them is held equal.
 2. **Floor transfer and few-shot adaptation** *(done for floor 1)*. Drop everyone into
    the dungeon, which nobody trained on. Whose knowledge transfers? Who adapts
    fastest when given a little local experience?
-3. **Distillation** *(running now)*. Try to combine the LLM's deep game knowledge
+3. **Distillation** *(done — result 4 below)*. Combine the LLM's deep game knowledge
    with the world model's learned survival instincts into a single policy.
 4. **Full-depth training** *(ahead)*. Push training below the surface floor using a
    bank of saved game states as a curriculum, working toward all nine floors.
+5. **Long-horizon credit assignment** *(ahead — the reason this project exists)*.
+   Once trajectories run deep, use exact save-and-replay branching to ask "which
+   decision two hundred steps ago made this diamond possible?", and test whether
+   answering it properly beats standard advantage estimation.
 
 ## Results so far
 
@@ -64,9 +73,10 @@ evaluation, which is a story told honestly in the report.
 
 ### 2. But they know different things — and each dies of what it doesn't know
 
-- The LLMs walk the deep tech chain straight out of the box (iron in 14 of 60 worlds). The world model never found iron on
+- The LLMs walk the deep tech chain straight out of the box (iron in 14 of 60 worlds),
+  because Minecraft folklore contains that chain. The world model never found iron on
   the surface: its exploration never reached the ore.
-- The LLMs also **die of thirst**. The LLM prior has no
+- The LLMs also **die of thirst**. Minecraft has no thirst meter, so the prior has no
   such habit — and 3,200 decisions of PPO did not patch the hole. The world model
   learned the meters this game actually has and survives 90% of its episodes.
 - One floor down, in a dungeon nobody trained on, the pattern inverts precisely. The
@@ -87,25 +97,66 @@ batch was just as rich, and its own internal estimates pointed at the right less
 The bottleneck is absorption. PPO's trust region — the safety rule that stops a policy
 from moving too far in one update — tripped after a single 16-state step, because
 unfamiliar states make the policy hypersensitive. The world model simply refits on
-everything it has ever seen and re-plans. Learning facts and re-planning against them
-has no built-in speed limit; an on-policy policy gradient must move slowly to stay
-valid. The caution that protects PPO at home is exactly what stops it adapting
-somewhere new.
+everything it has ever seen and re-plans.
 
-## Comparison guardrails
+A follow-up A/B closed the loophole in that explanation: removing the safety rule
+entirely (and fixing a data-collection bug) still produced no adaptation — PPO
+scored the same as not training at all. So the constraint tripping was a symptom,
+not the cause. A policy gradient can only nudge the probabilities of actions it
+happened to take; the world model turns the same experience into updated beliefs
+and replans every decision. The 10× adaptation gap belongs to the algorithm class,
+not its settings.
 
-The guardrails:
+### 4. Distilling the world model back into the LLM mostly works — and its two failures were predicted in advance
+
+The final arm teaches the world model's decisions back to the LLM with supervised
+distillation, aiming for a policy with the prior's deep knowledge *and* the learned
+survival. Five predictions were written down before the run; two failed, and the
+pattern is the finding. The distilled LLM scores 9.75 — far above frozen (7.29,
+p<0.001) and statistically indistinguishable from its search-based teacher, at a
+single forward pass per decision. It drinks 339 times and **never once dies of
+thirst** (frozen: zero drinks, 29 thirst deaths) — the mechanic RL couldn't install,
+delivered by distillation from the same experience. The costs, reported as the
+failed predictions they are: some deep-tier reach was crowded out (iron in 8 worlds,
+was 14 — the copied policy spends 28% of its decisions on upkeep, and a 40-turn
+episode can't fit everything), and the teacher's risky dungeon sleep habit came
+along with only part of the judgment about when it's safe.
+
+A second distillation run then attacked those two failures with a pre-registered
+idea: retire the prior's veto on each action in proportion to how much real
+experience the teacher has with it, instead of maintaining an exemption list by
+hand. The idea was right in *direction* on both ends — the deleted skill came back
+(sapling-planting in 48 of 60 worlds, from zero) while the risky dungeon-sleep
+habit was filtered out entirely (50 dungeon sleeps down to zero, and the best
+floor-1 score of any LLM system here) — but wrong in *calibration*: the un-vetoed
+skill took over double its natural share of the policy, and because a preference
+distribution is a fixed budget, drinking and the deep crafting chain paid for it.
+Net score: a statistical tie with the first run, whose crude guard turned out to
+be quietly protecting the LLM's deep knowledge all along. The first run remains
+the reported arm; the failed prediction that proved the guard was load-bearing is
+reported as exactly that.
+
+## Why you can trust the comparison
+
+Most "A beats B" agent results get shakier the closer you look. The guardrails here,
+each of which exists because something went wrong first:
 
 - **Matched budgets, audited after the fact.** 3,200 decisions per system, counted
   from each run's own log files rather than from what the driver script intended.
 - **One action menu for everyone**, built on the rule *if an action is offered, it can
-  actually be performed*. 
+  actually be performed*. Two of the worst bugs in this project were violations of
+  that rule; both are now checked by replaying every offered action in a real game
+  state. Menu versions are stamped into every data file, and comparing data across
+  versions is a hard error rather than a footnote.
 - **Statistics that can say "we can't tell."** Every system plays the *same* 60
   evaluation worlds, so an unlucky, brutal world drags every system down equally and
   score differences reflect the systems rather than the draw. On top of that, every
   comparison states how big a difference it was even capable of detecting. If the
   measured gap is smaller than that threshold, the conclusion written down is "this
-  evaluation cannot tell these systems apart" — never "they are equal."
+  evaluation cannot tell these systems apart" — never "they are equal." The
+  discipline was learned the expensive way: four early "findings," one of them
+  looking quite convincing (p=0.002), evaporated when the evaluation grew from 10
+  worlds to 60. All four are documented in the report rather than quietly dropped.
 - **Predictions written down before the results exist.** Before an experiment runs,
   what it is expected to show is written into the script that launches it. That
   closes off the most tempting move in empirical work: peeking at the results and
@@ -215,6 +266,8 @@ so an interrupted run continues rather than restarting.
    decisions, results, and what it took to measure them. Its appendix has the precise
    contracts and formulas for the action constructor, the world model, and the
    semi-Markov PPO implementation.
-2. [docs/METRICS.md](docs/METRICS.md) — the pre-registered measurement contract.
-3. [docs/LESSONS.md](docs/LESSONS.md) — the engineering rules this project paid for,
+2. [PROGRESS.md](PROGRESS.md) — the running lab notebook: denser, with every ablation
+   and every negative result in the order they happened.
+3. [docs/METRICS.md](docs/METRICS.md) — the pre-registered measurement contract.
+4. [docs/LESSONS.md](docs/LESSONS.md) — the engineering rules this project paid for,
    each written against the incident that motivated it.
