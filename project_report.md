@@ -1,5 +1,11 @@
 # Project report: LLM priors vs. learned world models on Craftax
 
+*Four agent systems, one game, one interaction budget. What does each one learn?
+What can each one not learn? And what does it take to measure the difference
+honestly?*
+
+---
+
 ## 1. Motivation
 
 There are two common answers to "how should an agent get good at an environment?"
@@ -9,7 +15,9 @@ There are two common answers to "how should an agent get good at an environment?
 2. **Learn a model of the environment.** Predict what actions do, plan against those
    predictions, and let interaction be the source of competence.
 
-This project puts both approaches in the same harness, on
+These two approaches are usually compared across different papers, with different
+budgets, different action spaces, and different evaluation setups. That makes the
+comparisons hard to trust. This project puts both approaches in the same harness, on
 the same benchmark, with the same budget, and asks one narrow question:
 
 > **Given exactly 3,200 environment decisions to learn from, does a world model
@@ -20,7 +28,9 @@ The testbed is **Craftax** (the full version). It is a 2D survival game in the
 Minecraft family: a tech tree that runs from wood to stone to iron to diamond,
 hunger/thirst/energy/health meters, day and night, hostile monsters, and a dungeon
 with nine floors. Two properties make it a good testbed. It is hard enough that
-neither approach wins trivially. 
+neither approach wins trivially. And, in a way that turned out to matter a lot, *part*
+of the game matches Minecraft folklore an LLM already knows (the tech tree), and part
+of it does not (the thirst meter, the dungeon).
 
 This comparison is stage one of a larger program (the README has the roadmap). The
 same infrastructure is built to eventually support training and evaluation across all
@@ -35,7 +45,13 @@ The four systems:
 | FROZEN | Qwen3-4B picks actions from a menu | nothing | inference only |
 | PPO | same LLM, fine-tuned with PPO+GAE | 3,200 decisions | ~376M tokens, 3.2 GPU-h |
 | TEACHER | small world model + value net, no LLM at all | 3,200 decisions, from scratch | minutes of CPU |
-| DISTILL | the teacher's decisions taught back to the LLM | inherits the teacher's data | running now |
+| DISTILL | the teacher's decisions taught back to the LLM | inherits the teacher's data | ~2.8 GPU-h |
+
+The LLM arms run Qwen3-4B behind a vLLM inference server, and training updates it
+through LoRA adapters that are merged back into the served weights between
+iterations. Training gradients are computed by a separate HuggingFace/PyTorch stack —
+same weights, different kernels — which is why the report keeps returning to the
+discipline of never trusting one stack's probabilities in the other's computation.
 
 ---
 
@@ -52,6 +68,14 @@ One rule governs the menu: **if an action is offered, it can actually be done.**
 is not offered when energy is full. Craft is not offered without materials. The menu
 constructor checks these conditions using the same code the controller uses, so the
 two can never disagree.
+
+This sounds like a detail. It nearly sank the project. An early version offered
+`drink` and `sleep` unconditionally. The LLM ignored them (its prior "knows" they're
+usually pointless), but the world-model planner had no such instinct and spent **61%
+of its entire training budget** on actions that did nothing. Every comparison made
+with that menu was garbage. The menu is now covered by regression tests, because the
+menu *is* the experiment: if different systems saw different action spaces, none of
+the downstream numbers would mean anything.
 
 (The full constructor contract — its two invariants, the shared grounding predicates,
 and the gate that enforces them empirically — is in appendix A.1.)
@@ -252,7 +276,7 @@ That reframes the question from "which system is better?" to "which knowledge so
 fails where?" — and it set up the two experiments that follow. Few-shot adaptation:
 give each system a little dungeon experience and see who fixes their blind spot
 faster (section 3.6). Distillation: try to combine the LLM's deep knowledge with the
-teacher's learned survival into one policy (running now).
+teacher's learned survival into one policy (section 3.7).
 
 ### 3.5 The negative results, stated plainly
 
@@ -313,8 +337,167 @@ learned *when* sleep kills.
 The takeaway: **per decision of experience, the world model converts evidence into
 behavior change roughly ten times faster.** That is not a tuning issue. Learning
 facts and re-planning against them has no speed limit; an on-policy policy gradient
-must move slowly to stay valid. The caution that protects PPO at home is exactly
-what prevents it from adapting quickly somewhere new.
+must move slowly to stay valid.
+
+A follow-up A/B then tested the tempting version of that explanation — "so if we
+remove the caution, PPO will adapt" — and refuted it. With the data-collection bug
+fixed (the full 400 decisions this time) and the trust region disabled entirely,
+PPO's dungeon score still did not move: 4.5–4.9 across both arms, against 4.9 for
+not adapting at all. The safety rule tripping was a symptom, not the cause. The
+deeper limit is structural: a policy gradient can only reweight actions it happened
+to take, one noisy sample at a time, while the teacher turns the same 400
+experiences into an updated model of the world and replans every decision against
+it. Speed of adaptation belongs to the algorithm class, not to its settings.
+
+### 3.7 Distillation: the union is real, and so are its costs
+
+The last arm asks whether the two knowledge sources can be merged: teach the
+teacher's decisions back to the LLM, and try to end up with a policy that has the
+prior's deep game knowledge *and* the teacher's learned survival. The failure mode
+to fear — written down as the null hypothesis before the run — is **interference**:
+dragging the whole policy toward the teacher and destroying the depth prior in the
+process, so the LLM forgets iron to learn drinking.
+
+The mechanics, briefly (the design doc has the full version). The teacher and the
+LLM already rank the same menus, so each logged state becomes a training example:
+a target distribution built from the teacher's action scores, softened by the base
+LLM's own preferences so the student is not yanked toward actions the prior finds
+absurd — with one audited exception: survival actions skip that softening, because
+"the prior finds drinking absurd" is precisely the disease being treated. States
+where the teacher was unconfident carry no teaching signal at all, and everywhere,
+a penalty term anchors the student back toward the original model, which is what
+guards the deep knowledge in states the teacher has nothing to say about. Two
+training rounds (a blunt one, then the careful one), ~2.8 GPU-hours, and zero new
+environment interactions. One honest budget note: the source was the *dungeon-
+adapted* teacher, so this arm's data lineage is 3,600 decisions, not the matched
+3,200 — it is labelled accordingly and kept out of the matched table.
+
+Five predictions were registered before the run. Two passed, two failed, one was
+report-only — and the pattern of which is the finding:
+
+| prediction | result |
+|---|---|
+| P1: upkeep transfers (≥5 drinks/60 worlds, dehydration deaths drop) | **PASS** — 339 drinks, **zero** dehydration deaths (FROZEN: 0 and 29) |
+| P2: survival above FROZEN's | **PASS** — 53/60 vs 29/60, teacher-level |
+| P3: depth retained (iron/stone counts stay in the LLM band) | **FAIL** — stone retained (29), iron dropped 14 → 8 |
+| P4: headline reward (report-only) | 9.75 — between the parents, closer to the teacher |
+| P5: floor-1 sleep habit not imported | **FAIL** — 5 of 8 dungeon deaths involve sleep |
+
+The headline numbers first. Against the frozen model the distilled one is better by
++2.46 reward, +1.97 achievements and +40 points of survival, all at p<0.001 — and
+against its own teacher it is statistically indistinguishable on all three metrics
+(−0.86 reward, p=0.066). Everything PPO was supposed to deliver from the same
+underlying experience, delivered — and at deployment cost of a single forward pass
+per decision, where the teacher runs an ensemble and a value network over every
+menu option. The mechanic that 3,200 decisions of RL could not install (PPO after
+training: 7 drinks, 26 dehydration deaths) arrived intact through supervised
+distillation of the same teacher's knowledge: not just present but *well-timed*,
+with the distilled model's drink spacing matching the teacher's almost exactly.
+
+Now the two failures, because they are the informative part.
+
+**The P3 failure is real but is not forgetting.** The iron capability survived:
+half of the distilled model's iron worlds are ones the frozen model never cracked,
+and in the ten worlds where it "lost" iron it still crafted stone pickaxes in five
+and out-scored the frozen model in six. What actually happened is arithmetic:
+**27.7% of the distilled model's decisions go to upkeep** (frozen: 0.0%), and
+eleven decisions of drinking and sleeping do not fit inside a 40-turn episode next
+to a five-step crafting chain. It traded tier-3 achievements for survival and won
+on net reward — but the pre-registered bar said iron stays in the band, and it did
+not. Reported as failed; diagnosed, post-hoc, as opportunity cost rather than
+interference. The distinction matters for what comes next: forgetting would
+indict the anchor design, while opportunity cost is a property of the teacher's
+*policy* being faithfully copied, upkeep-heaviness included.
+
+**The P5 failure is the exact risk that was accepted going in.** Using the
+dungeon-adapted teacher as the source (rather than restricting to surface states)
+was a deliberate decision, and its known risk was importing the teacher's sleep
+habit into the dungeon, where sleeping is dangerous. It happened: the distilled
+model sleeps 50 times on floor 1 and five of its eight deaths involve it — a
+mistake the frozen model, which never sleeps, structurally cannot make. The habit
+arrived with partial selectivity (10% of dungeon sleeps end in death, versus 34%
+for the unadapted teacher and 5% for the adapted one), and the floor-1 package is
+still strongly net-positive (+3.2 reward over frozen, p=0.002, survival not
+worse). But the prediction failed, and the lesson is symmetrical with section 3.4:
+distillation transfers habits with less of the context that made them safe.
+
+One more question the data answers: why does the distilled model *match* its
+teacher rather than beat it, given it also holds the prior's deep knowledge?
+Because imitation's ceiling is the teacher's own policy — exceeding it requires
+the prior's contributions to outrun the imitation losses, and measured
+achievement-by-achievement, they almost exactly cancel. The prior contributed the
+entire mining chain the teacher never had; the losses concentrate in a single
+identifiable mechanism. The teacher earns a point in nearly every world by
+planting saplings — and the distilled model **never places anything**, because
+the frozen LLM never places anything (zero times in 1,766 decisions), so the
+trust-region softening crushed every place-action target exactly the way it would
+have crushed drinking had drinking not been explicitly exempted. The same
+prior-finds-it-absurd disease, one category not on the exemption list, roughly
+the whole teacher gap. It is a precise illustration of the design's real dial:
+every category exempted from the trust region transfers one more teacher lesson
+and removes one more guard on the prior.
+
+The summary sentence for the arm: **distillation produced the second-best system
+ever measured here — a single-forward-pass policy that matches its search-based
+teacher on the surface, fixes the LLM's fatal blind spot, and pays for it with a
+measured share of the depth prior and one imported habit.** The union is real, and
+it is not free.
+
+### 3.8 Distillation, second try: replace the hand-list with evidence — and learn why the guard was there
+
+The sapling finding above pointed at an obvious repair. The exemption list — the
+hand-written set of actions allowed to bypass the prior's veto — was one entry
+short, and any hand-maintained list will always be one entry short of *something*.
+So the second distillation run replaced the list with a rule: **each action's veto
+is retired in proportion to how much real experience the teacher has with it.** An
+action the teacher has performed hundreds of times (drinking: 311, placing: 566)
+earns most of its freedom from the veto; an action the teacher has barely tried
+(sleeping in the dungeon: 15 times in its entire life) keeps most of the veto. The
+weight is the same evidence-vs-prior blend the reward head already uses, applied
+one level up, and the whole calibration is computed from the teacher's own training
+history — no evaluation data touched.
+
+Five predictions were registered before the run, and one of them was deliberately
+two-sided: if this rule really measures evidence, it should transfer *more* in one
+place and *less* in another at the same time — placing should finally come through,
+*and* the risky dungeon-sleep habit v2 had imported should get filtered out,
+because that habit is exactly where the teacher's evidence is thinnest.
+
+Both of those came true, emphatically. The student went from never placing anything
+to placing in earnest (the sapling achievement in 48 of 60 worlds, from zero). And
+in the dungeon it slept **zero** times — v2 slept 50 times and died for it five
+times — which lifted its dungeon score from 7.2 to 8.8, the best floor-1 result any
+LLM-based system has posted here. The direction of the idea is confirmed on both
+ends of the dial.
+
+The calibration, however, failed — and the way it failed is the finding. Drinking
+collapsed (339 takes down to 33; seven thirst deaths returned), and the deep
+crafting chain nearly vanished (stone pickaxes in 4 worlds, down from 29; iron in
+2, down from 8). The overall score, 9.56 against v2's 9.75, is a statistical tie:
+the gains and the losses cancelled.
+
+One number explains all of it. The teacher spends 16% of its decisions placing
+things; the new student spends **31%** — double its own teacher. The training label
+is a probability distribution, so it is a fixed budget: every point of preference
+given to one action is taken from another. Un-vetoing the teacher's single
+strongest lesson didn't restore it to its natural share — it let it outbid
+everything else. Drinking, whose winning margins were always slim, lost the
+auction; and an agent that spends a third of a 40-turn episode placing simply runs
+out of turns for the five-step chain that leads to iron. One number per action
+family, blind to margins, cannot express "transfer this lesson *at the teacher's
+rate*."
+
+Two conclusions were written into the design before the run, and both fired. The
+depth collapse was the pre-declared refutation branch — *"if iron collapses, the
+v2 trust region was earning its keep"* — so the crude veto keeps its job, and v2
+remains the reported distillation arm. And the broader lesson joins the ones in
+section 3.2: **distillation hands out a fixed budget of preference, and whatever
+mechanism damps the teacher's lessons is really deciding who wins that auction.**
+A hand list is too rigid, a family-level evidence weight is too coarse; if a third
+attempt is ever made, it has to allocate mass, not just remove vetoes. The keeper
+from this run is the dungeon policy — proof that filtering *by evidence* can
+outperform filtering *by category* exactly where the teacher's knowledge is
+newest.
 
 ---
 
@@ -370,9 +553,13 @@ Against the roadmap in the README:
   one-shot test-set run.
 - **Stage 2 — floor transfer and few-shot adaptation: done for floor 1**
   (sections 3.4, 3.6), with both pre-registered predictions resolved.
-- **Stage 3 — distillation: running now.** The adapted teacher is the source — its
-  dungeon habits are no longer lethal, which removes the main risk of teaching them
-  to the LLM. Design in [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md).
+- **Stage 3 — distillation: done, two runs** (sections 3.7–3.8). The first run is
+  the reported arm: a partial union, with its two failed predictions reported as
+  failures. The second run replaced the hand-tuned guard with an evidence rule —
+  right in direction on both pre-registered ends, wrong in calibration, and it
+  proved by ablation that the original guard was protecting the deep knowledge.
+  Design and both pre-registrations in
+  [docs/DISTILL_DESIGN.md](docs/DISTILL_DESIGN.md).
 - **Stage 4 — full-depth training** using the saved-state curriculum. One
   prerequisite queued first: the exploration upgrade for the surface discovery gap,
   now well-motivated — the few-shot result proved the teacher learns deep resources
