@@ -23,11 +23,17 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from executor import CRAFTABLES, PLACEABLES, RESOURCES, Executor, SkillResult
+from executor import (CRAFTABLES, PLACEABLES, RESOURCES, _GOTO_TARGETS, Executor,
+                      SkillResult)
+
+GOTO_TARGETS = sorted(_GOTO_TARGETS)
 
 DIRECTIONS = ["up", "down", "left", "right"]
 FIGHT_TYPES = ["melee", "ranged", "passive"]
-EAT_TARGETS = ["cow", "plant", "auto"]
+EAT_TARGETS = ["cow", "plant", "auto", "bat", "snail"]
+SPELL_TYPES = ["fireball", "iceball"]
+ENCHANT_TARGETS = ["sword", "armour", "bow"]
+POTION_COLORS = ["red", "green", "blue", "pink", "cyan", "yellow"]
 
 
 # --- skill menu (the planner's action space; mirrors Executor) ---------------
@@ -78,11 +84,18 @@ SKILLS: Dict[str, Skill] = {
     ),
     "fight": Skill(
         "fight", "fight",
-        "Kill nearby visible hostile mobs (approach→face→do); bails at health_floor.",
+        "Kill nearby visible mobs (approach→face→do). types=passive hunts cows/bats/"
+        "snails (+food on the kill).",
+        # health_floor default matches the EXECUTOR's (0 since 2026-07-27; this schema
+        # copy said 2 until 2026-07-28). `_coerce` skips absent args so the executor's
+        # default already applied — but the schema is what docs/menus RENDER, and a
+        # declared default that disagrees with the real one is R1's proxy problem in
+        # documentation form.
         [Arg("count", "int", False, 1, None, "how many to kill"),
          Arg("types", "enum", False, None, FIGHT_TYPES,
              "restrict to one mob class; omit for melee+ranged"),
-         Arg("health_floor", "int", False, 2, None, "retreat threshold")],
+         Arg("health_floor", "int", False, 0, None,
+             "retreat threshold (0 = never retreat; retreating is the policy's call)")],
     ),
     "drink_water": Skill(
         "drink_water", "drink_water",
@@ -93,8 +106,12 @@ SKILLS: Dict[str, Skill] = {
     ),
     "eat": Skill(
         "eat", "eat",
-        "Restore food: eat a ripe plant (+4) or kill&eat a cow (+6). Do this before "
-        "food runs out. `auto` prefers a reachable plant, else a cow.",
+        # Menu-visible text: the constructor only ever offers eat(target=plant) since
+        # 2026-07-28 — food from mobs comes from fight(types=passive), where the combat
+        # risk belongs. The cow/bat/snail targets remain EXECUTOR capabilities (and stay
+        # in EAT_TARGETS so old logged actions still parse), just not menu actions.
+        "Restore food by eating a ripe plant (+4). Do this before food runs out. "
+        "To get food from animals, hunt them: fight(types=passive).",
         [Arg("target", "enum", False, "auto", EAT_TARGETS, "food source"),
          Arg("count", "int", False, 1, None, "how many to eat")],
     ),
@@ -117,6 +134,65 @@ SKILLS: Dict[str, Skill] = {
         "ascend", "ascend",
         "Go up one floor via the nearest seen up-ladder (no clear requirement).",
         [],
+    ),
+    "open_chest": Skill(
+        "open_chest", "open_chest",
+        "Open the nearest SEEN chest (loot: torches / ore / a potion / arrows / a "
+        "tool; a bow from the first floor-1 chest, a book on deeper floors). Unlocks "
+        "open_chest. Does not gather.",
+        [],
+    ),
+    "collect_sapling": Skill(
+        "collect_sapling", "collect_sapling",
+        "Collect a sapling by searching grass (each attempt has a small chance). The "
+        "sapling can be placed (place plant) to grow food.",
+        [Arg("count", "int", False, 1, None, "how many saplings")],
+    ),
+    "shoot": Skill(
+        "shoot", "shoot",
+        "Fire an arrow with the bow (auto-aims at the nearest visible mob, or a given "
+        "direction). Needs a bow (from a chest) and arrows (crafted); unlocks fire_bow.",
+        [Arg("direction", "enum", False, None, DIRECTIONS, "which way to fire")],
+    ),
+    "cast": Skill(
+        "cast", "cast",
+        "Cast a learned spell in a direction (auto-aims if omitted). Needs the spell "
+        "learned (read a book) and 2 mana; unlocks cast_fireball/cast_iceball.",
+        [Arg("spell", "enum", True, None, SPELL_TYPES, "which spell to cast"),
+         Arg("direction", "enum", False, None, DIRECTIONS, "which way to cast")],
+    ),
+    "read_book": Skill(
+        "read_book", "read_book",
+        "Read a book to learn a random spell (fireball or iceball). Needs a book "
+        "(books drop from chests on deeper floors); unlocks learn_fireball/iceball.",
+        [],
+    ),
+    "drink_potion": Skill(
+        "drink_potion", "drink_potion",
+        "Drink a potion from inventory (color auto-picked if omitted). Effects are "
+        "randomized per world (may help OR harm); unlocks drink_potion.",
+        [Arg("color", "enum", False, None, POTION_COLORS, "which potion color")],
+    ),
+    "enchant": Skill(
+        "enchant", "enchant",
+        "Enchant sword/armour/bow at the nearest seen enchantment table (fire table "
+        "needs a ruby, ice table a sapphire) for 9 mana. Unlocks enchant_sword/armour.",
+        [Arg("target", "enum", False, "sword", ENCHANT_TARGETS, "what to enchant")],
+    ),
+    # APPEND-ONLY BEYOND THIS POINT. `models/action_encode.SKILL_LIST` is
+    # `list(SKILLS.keys())` and one-hots by POSITION, so inserting a skill mid-dict
+    # shifts every later index and silently MISALIGNS every stored action encoding —
+    # `data/dataset_v2` and `models/outcome_v2_K*.pt` would decode to the wrong skills
+    # rather than merely being narrow. Appending only widens 55->56 with the new slot
+    # zero in historical rows, which is recoverable by zero-padding.
+    # (`go_to` was briefly inserted after `craft` on 2026-07-26 and moved here.)
+    "go_to": Skill(
+        "go_to", "go_to",
+        "Walk to a crafting station you have already seen, ending adjacent to it. "
+        "Crafting next to an existing table costs only the recipe; crafting away from "
+        "one also costs 2 wood to place a new table.",
+        [Arg("target", "enum", True, None, list(GOTO_TARGETS),
+             "which remembered station to walk to")],
     ),
 }
 
@@ -222,7 +298,33 @@ def build_system_prompt() -> str:
     return f"{SYSTEM_RULES}\n\n# Skill menu\n{_menu_text()}"
 
 
-def build_header(env, ledger: List["LedgerEntry"]) -> str:
+def _stations_line(ex) -> List[str]:
+    """One line naming remembered crafting stations and how far they are.
+
+    The raw observation renders only the VISIBLE window, so a table the agent built and
+    walked away from is invisible to the planner — while `go_to(target=crafting_table)`
+    sits on its menu. This closes that gap. It also exposes the cost asymmetry the whole
+    `go_to` option exists for: crafting beside a table costs the recipe alone, crafting
+    away from one costs an extra 2 wood to place a second table.
+    """
+    if ex is None:
+        return []
+    try:
+        st = ex.known_stations()
+    except Exception:                      # never let a prompt helper break a rollout
+        return []
+    parts = []
+    for name, d in sorted(st.items()):
+        if d is None:
+            continue
+        parts.append(f"{name}=adjacent" if d == 0 else f"{name}~{d} steps away")
+    if not parts:
+        return ["  known_stations: none remembered on this floor "
+                "(crafting will place a new table, costing 2 wood)"]
+    return [f"  known_stations: {', '.join(parts)}"]
+
+
+def build_header(env, ledger: List["LedgerEntry"], ex=None) -> str:
     """Compact running progress summary (distinct from the raw obs)."""
     inv = env.state.inventory
     s = env.state
@@ -232,6 +334,7 @@ def build_header(env, ledger: List["LedgerEntry"]) -> str:
     return "\n".join([
         "# Progress",
         f"  turn={len(ledger)} env_step={env.t} floor={int(s.player_level)}",
+        *_stations_line(ex),
         f"  achievements_unlocked={len(unlocked)}: {names if names else '(none yet)'}",
         f"  vitals: health={int(s.player_health)} food={int(s.player_food)} "
         f"drink={int(s.player_drink)} energy={int(s.player_energy)}"
@@ -343,6 +446,17 @@ class HierarchicalAgent:
         )
         self.ledger.append(entry)
         if "episode ended" in result.reason:
+            self.done = True
+        # ...and the ACTUAL terminal condition, not just a skill's report of it. A skill
+        # only says "episode ended" if it observed `done` while stepping, but craftax
+        # raises `done` on the step AFTER health reaches 0 — so a macro-action that ends
+        # exactly on the killing blow returns normally and leaves the loop to build a menu
+        # on a corpse. Found 2026-07-28 by NOOPGATE: seed 44 t=89, health 0.0, 12
+        # candidates offered, every `fight` variant returning 0 steps ("low health (0)").
+        # Real evals show 0 trailing zero-step decisions, so this never moved a reported
+        # number — in production the next skill steps once, sees `done`, and stops. It
+        # still costs one decision made while dead, and charges it to the budget.
+        if self.env.is_terminal():
             self.done = True
         if self.max_env_steps is not None and self.env.t >= self.max_env_steps:
             self.done = True
