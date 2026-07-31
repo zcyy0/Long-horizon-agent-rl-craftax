@@ -119,13 +119,9 @@ Returns, GAE, the value network, and world-model action values all use elapsed p
 
 Qwen3-4B scores every action string in the current menu. For action $a$ with tokens $y_{1:L}$, the score is its length-normalized mean token log-probability:
 
-```math
-s_\theta(h,a)
-=
-\frac{1}{L}
-\sum_{j=1}^{L}
-\log p_\theta\left(y_j \mid h, y_{<j}\right)
-```
+$$
+`s_\theta(h,a)=\frac{1}{L}\sum_{j=1}^{L}\log p_\theta\left(y_j \mid h,y_{<j}\right)`
+$$
 
 The scores are divided by a calibrated temperature and normalized across the menu to form a categorical policy. Length normalization prevents a short action such as `sleep()` from receiving an artificial advantage over a longer serialization such as `mine(resource=wood, count=1)`.
 
