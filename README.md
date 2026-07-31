@@ -1,9 +1,5 @@
 # LLM Priors vs. Learned World Models in Craftax
 
-### Model-free RL, model-based planning, and policy distillation under a limited interaction budget
-
-> **Status:** The results below are from 60 paired development worlds. An untouched 80-world test set is reserved for one final evaluation after the experimental design is frozen.
-
 ## Overview
 
 This project asks a practical agent-learning question:
