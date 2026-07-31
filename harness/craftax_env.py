@@ -53,6 +53,10 @@ class CraftaxTextEnv:
         _, self.state = self.env.reset(reset_key, self.params)
         self.action_history: List[int] = []
         self.achievement_log: List[List[str]] = []
+        # per-primitive reward trace (aligned with action_history) — lets a skill/
+        # option recover the *sequence* of primitive rewards it earned, which the
+        # macro-reward primitive-step discounting needs (NEW_RESEARCH_PLAN §3.1).
+        self.reward_history: List[float] = []
         self._unlocked: set = set()
         self.t = 0
         return self.obs()
@@ -64,6 +68,7 @@ class CraftaxTextEnv:
             step_key, self.state, a, self.params
         )
         self.action_history.append(a)
+        self.reward_history.append(float(reward))
         self.t += 1
         newly = self._newly_unlocked()
         self.achievement_log.append(newly)
@@ -94,6 +99,32 @@ class CraftaxTextEnv:
         return self.go_forward(keep)
 
     # ---- helpers ---------------------------------------------------------
+    def is_terminal(self) -> bool:
+        """Is the episode over RIGHT NOW — i.e. is this state a decision point at all?
+
+        SINGLE SOURCE OF TRUTH, and it exists because there were five. Every loop that
+        spends a decision (`AgentLoop.step_turn`, `eval_system.run_episode`,
+        `collect_teacher_rollouts`, `collect_categorical_rollouts`, `collect_coverage`)
+        decided this for itself by string-matching "episode ended" in the last skill's
+        `reason`. That is a PROXY: a skill only writes that phrase if it observed `done`
+        while stepping, and craftax raises `done` on the step AFTER health reaches 0 — so
+        a macro-action ending exactly on the killing blow returns normally and the loop
+        takes another turn on a corpse.
+
+        Cost when it bit (2026-07-28): 36 zero-step `fight`s in one dev eval (6.4% of its
+        decisions) and 81 of 1,200 CHARGED S6 decisions (6.75%) spent post-death, which
+        forced a re-collection — the matched interaction budget is the axis the whole
+        four-system comparison rests on. Worse in a collector than an evaluator: a dead
+        agent that picks `fight` gets 0 steps and never produces the "episode ended"
+        string, so the loop can run to `max_turns`.
+
+        Callers should still ALSO break on the reason string: that catches truncation and
+        engine-side terminations this predicate does not model. This answers exactly one
+        question — "is the player dead" — and answers it from the state rather than from
+        a report about the state. (LESSONS R1; don't infer a state you can read.)
+        """
+        return float(self.state.player_health) <= 0
+
     def obs(self) -> str:
         return render_text(self.state)
 
