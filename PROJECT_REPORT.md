@@ -17,7 +17,7 @@ I built one Craftax harness in which every system chooses from the same grounded
 
 The primary matched-interaction comparison is **PPO versus TEACHER**. FROZEN is a no-training reference. DISTILL is reported separately because it inherits the teacher's data after an additional 400-decision dungeon adaptation stage.
 
-### Main development-set results
+### Main dev-set results
 
 On 60 paired surface worlds:
 
