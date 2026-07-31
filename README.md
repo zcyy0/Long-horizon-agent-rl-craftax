@@ -166,8 +166,8 @@ The planned credit-assignment extension will compare standard duration-aware GAE
 
 ## Documentation
 
-- [`docs/PROJECT_REPORT.md`](docs/PROJECT_REPORT.md) — accessible research narrative, results, ablations, and limitations.
-- [`docs/TECHNICAL_APPENDIX.md`](docs/TECHNICAL_APPENDIX.md) — exact action-menu contract, world-model architecture, semi-Markov PPO formulation, exploration-mixture correction, and distillation losses.
+- [`PROJECT_REPORT.md`](PROJECT_REPORT.md) — accessible research narrative, results, ablations, and limitations.
+- [`TECHNICAL_APPENDIX.md`](TECHNICAL_APPENDIX.md) — exact action-menu contract, world-model architecture, semi-Markov PPO formulation, exploration-mixture correction, and distillation losses.
 
 ## What's in the repo
 
