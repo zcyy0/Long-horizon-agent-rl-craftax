@@ -106,9 +106,7 @@ Macro-actions have different durations. A short fight may take three game steps;
 The project therefore treats the planner as a semi-Markov decision process. If macro-action $t$ lasts $\tau_t$ primitive steps, its reward is
 
 $$
-R_t^{\mathrm{macro}}
-=
-\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
+R_t^{\mathrm{macro}}=\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
 $$
 
 Returns, GAE, the value network, and world-model action values all use elapsed primitive time. The implementation is shared across systems and tested against hand-calculated trajectories.
@@ -122,10 +120,7 @@ Returns, GAE, the value network, and world-model action values all use elapsed p
 Qwen3-4B scores every action string in the current menu. For action $a$ with tokens $y_{1:L}$, the score is its length-normalized mean token log-probability:
 
 $$
-s_\theta(h,a)
-=
-\frac{1}{L}\sum_{j=1}^{L}
-\log p_\theta(y_j\mid h,y_{<j}).
+s_\theta(h,a)=\frac{1}{L}\sum_{j=1}^{L}\log p_\theta(y_j\mid h,y_{<j}).
 $$
 
 The scores are divided by a calibrated temperature and normalized across the menu to form a categorical policy. Length normalization prevents a short action such as `sleep()` from receiving an artificial advantage over a longer serialization such as `mine(resource=wood, count=1)`.
@@ -139,30 +134,17 @@ The PPO arm starts from the same Qwen3-4B policy and trains LoRA adapters with d
 The GAE recurrence is
 
 $$
-\delta_t
-=
-R_t^{\mathrm{macro}}
-+
-\gamma^{\tau_t}(1-d_t)V(h_{t+1})
--
-V(h_t),
+\delta_t=R_t^{\mathrm{macro}}+\gamma^{\tau_t}(1-d_t)V(h_{t+1})-V(h_t),
 $$
 
 $$
-\widehat A_t
-=
-\delta_t
-+
-\gamma^{\tau_t}\lambda(1-d_t)\widehat A_{t+1}.
+\widehat A_t=\delta_t+\gamma^{\tau_t}\lambda(1-d_t)\widehat A_{t+1}.
 $$
 
 The policy is the categorical distribution over the complete menu. PPO therefore uses one scalar probability ratio per macro-decision, not independent token-level ratios:
 
 $$
-\rho_t
-=
-\frac{\mu_{\mathrm{new}}(a_t\mid h_t)}
-{\mu_{\mathrm{old}}(a_t\mid h_t)},
+\rho_t=\frac{\mu_{\mathrm{new}}(a_t\mid h_t)}{\mu_{\mathrm{old}}(a_t\mid h_t)},
 $$
 
 where $\mu$ includes the same $\varepsilon=0.05$ exploration mixture used during collection. The clipped surrogate is applied to this decision-level ratio, and further optimizer steps stop when the menu-policy KL crosses the configured threshold.
@@ -174,15 +156,7 @@ The TEACHER contains no LLM and starts from randomly initialized neural networks
 Its one-step world model predicts
 
 $$
-M_\psi(x_t,a_t)
-\rightarrow
-\left(
-\widehat x_{t+1},
-\widehat r_t,
-\widehat\tau_t,
-\widehat d_t,
-\widehat y_t
-\right).
+M_\psi(x_t,a_t)\rightarrow\left(\widehat x_{t+1},\widehat r_t,\widehat\tau_t,\widehat d_t,\widehat y_t\right).
 $$
 
 The 132-dimensional state includes survival meters, inventory and equipment, the full set of already-unlocked achievements, visible entities, exploration status, floor information, and the previous action outcome. Typed output heads separately model continuous values, counts, binary events, categorical variables, duration, and death.
@@ -190,21 +164,13 @@ The 132-dimensional state includes survival meters, inventory and equipment, the
 A separate value network estimates continuation value. Each member of a three-model bootstrap ensemble scores an action as
 
 $$
-Q_m(h,a)
-=
-\widehat r_m(h,a)
-+
-\gamma^{\max(\widehat\tau_m,1)}
-\left(1-\widehat d_m(h,a)\right)
-V_\omega(\widehat x'_m).
+Q_m(h,a)=\widehat r_m(h,a)+\gamma^{\max(\widehat\tau_m,1)}\left(1-\widehat d_m(h,a)\right)V_\omega(\widehat x'_m).
 $$
 
 During data collection, one ensemble member is sampled for the full episode, producing coherent Thompson-style exploration. During evaluation, the planner uses a pessimistic score:
 
 $$
-S_{\mathrm{eval}}(h,a)
-=
-\mu_Q(h,a)-0.5U(h,a),
+S_{\mathrm{eval}}(h,a)=\mu_Q(h,a)-0.5U(h,a),
 $$
 
 where $U$ is ensemble disagreement.
@@ -218,10 +184,7 @@ The teacher's logged states already contain a menu and a score for every action.
 The teacher distribution is regularized toward the base LLM prior:
 
 $$
-q^*(a\mid h)
-\propto
-\pi_{\mathrm{base}}(a\mid h)
-\exp\left(\frac{S_{\mathrm{teacher}}(h,a)}{\beta}\right).
+q^*(a\mid h)\propto\pi_{\mathrm{base}}(a\mid h)\exp\left(\frac{S_{\mathrm{teacher}}(h,a)}{\beta}\right).
 $$
 
 A confidence gate suppresses uncertain teacher labels, while a KL anchor protects the base policy where the teacher has weak evidence. Survival actions receive a targeted exception because the base LLM assigns almost no probability to drinking, making multiplicative prior regularization unable to teach that behavior.
@@ -418,19 +381,4 @@ vLLM collects rollouts, while Hugging Face/PyTorch computes gradients. Identical
 5. **Add counterfactual long-horizon credit assignment.** Exact save/restore and branch execution are already implemented. Once deeper trajectories exist, the planned comparison is duration-aware GAE versus GAE augmented with branch-supervised counterfactual credit.
 
 ---
-
-## 9. Reproducibility
-
-Every reported table is generated by a driver script. Interaction budgets are counted from the produced logs rather than from intended configuration. The repository includes checks for:
-
-- action-menu executability and coverage;
-- semi-Markov return and GAE calculations;
-- death versus truncation handling;
-- reward-head consistency;
-- PPO menu-policy ratios and exploration-mixture correction;
-- LLM candidate-scoring gradients;
-- teacher-target reproducibility;
-- distillation confidence gating and KL anchoring;
-- paired evaluation and minimum detectable effects.
-
 For exact equations, model heads, action-grounding contracts, and training objectives, see [`TECHNICAL_APPENDIX.md`](TECHNICAL_APPENDIX.md).
