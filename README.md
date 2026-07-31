@@ -101,18 +101,23 @@ than to the safety setting first blamed.
 
 ### 4. Distilling the world model back into the LLM mostly works — and its two failures were predicted in advance
 
-The final arm teaches the world model's decisions back to the LLM with supervised
-distillation, aiming for a policy with the prior's deep knowledge *and* the learned
-survival. Five predictions were written down before the run; two failed, and the
-pattern is the finding. The distilled LLM scores 9.75 — far above frozen (7.29,
-p<0.001) and statistically indistinguishable from its search-based teacher, at a
-single forward pass per decision. It drinks 339 times and **never once dies of
-thirst** (frozen: zero drinks, 29 thirst deaths) — the mechanic RL couldn't install,
-delivered by distillation from the same experience. The costs, reported as the
-failed predictions they are: some deep-tier reach was crowded out (iron in 8 worlds,
-was 14 — the copied policy spends 28% of its decisions on upkeep, and a 40-turn
-episode can't fit everything), and the teacher's risky dungeon sleep habit came
-along with only part of the judgment about when it's safe.
+The last arm teaches the world model's decisions back to the LLM. Both rank the same
+menu, so every decision the world model made during its own training is already a
+labelled example and no new game experience is needed. Two guards stop the lesson
+from overwriting what the LLM already knows: the teacher's preferences are damped on
+actions the LLM considers absurd, and a penalty holds the student at its original
+behaviour wherever the teacher is unsure. Survival actions are exempt from the first
+guard — "the LLM thinks drinking is pointless" is the disease being treated.
+
+The result is the second-best system measured here: **9.75 reward — far above the
+frozen LLM (7.29, p<0.001) and statistically tied with its own search-based teacher —
+at one forward pass per decision** instead of a search over an ensemble. It drinks
+339 times and **never once dies of thirst** (frozen: zero drinks, 29 thirst deaths):
+the mechanic RL couldn't install, delivered by distillation from the same experience.
+Five predictions were written down before the run and two failed, both reported as
+failures — deep-tier reach shrank (iron in 8 worlds, was 14) because 28% of its turns
+now go to upkeep and a 40-turn episode can't fit everything, and the teacher's risky
+dungeon sleep habit came along with the rest.
 
 ## Why you can trust the comparison
 The guardrails here, each of which exists because something went wrong first:
