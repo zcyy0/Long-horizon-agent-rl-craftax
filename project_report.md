@@ -33,7 +33,10 @@ the same benchmark, with the same budget, and asks one narrow question:
 The testbed is **Craftax** (the full version). It is a 2D survival game in the
 Minecraft family: a tech tree that runs from wood to stone to iron to diamond,
 hunger/thirst/energy/health meters, day and night, hostile monsters, and a dungeon
-with nine floors. 
+with nine floors. Two properties make it a good testbed. It is hard enough that
+neither approach wins trivially. And, in a way that turned out to matter a lot, *part*
+of the game matches Minecraft folklore an LLM already knows (the tech tree), and part
+of it does not (the thirst meter, the dungeon).
 
 This comparison is stage one of a larger program (the README has the roadmap). The
 same infrastructure is built to eventually support training and evaluation across all
@@ -375,14 +378,22 @@ facts and re-planning against them has no speed limit; an on-policy policy gradi
 must move slowly to stay valid.
 
 A follow-up A/B then tested the tempting version of that explanation — "so if we
-remove the caution, PPO will adapt" — and refuted it. With the data-collection bug
-fixed (the full 400 decisions this time) and the trust region disabled entirely,
-PPO's dungeon score still did not move: 4.5–4.9 across both arms, against 4.9 for
-not adapting at all. The safety rule tripping was a symptom, not the cause. The
-deeper limit is structural: a policy gradient can only reweight actions it happened
-to take, one noisy sample at a time, while the teacher turns the same 400
-experiences into an updated model of the world and replans every decision against
-it. Speed of adaptation belongs to the algorithm class, not to its settings.
+remove the caution, PPO will adapt" — and refuted it. The update was re-run with the
+data-collection bug fixed (the full 400 decisions this time) and the KL early-stop
+switched off, so nothing halted it partway: it absorbed **22 minibatch steps instead
+of one**, with only the per-token clip still in the loss. The dungeon score did not
+move — 4.5 and 4.9 across the two arms against 4.9 for not adapting at all (n=40,
+detectable effect ≈ 2) — and nothing was forgotten on the surface either. The
+constraint tripping was therefore a symptom, not the cause: the update was free to
+run and had nothing to absorb.
+
+What that leaves is a structural reading: a policy gradient can only reweight the
+actions it happened to sample, one noisy example at a time, while the teacher turns
+the same 400 experiences into an updated model of the world and replans every
+decision against it. Stated at the strength the evidence supports: this A/B rules out
+the throttle as the explanation, and the structural account is the reading that
+survives it — not a separately tested claim. A fully unbounded policy gradient (no
+clip, larger steps) was not run.
 
 ### 3.7 Distillation: the union is real, and so are its costs
 
