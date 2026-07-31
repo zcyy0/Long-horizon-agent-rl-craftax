@@ -1,147 +1,192 @@
-# Long Horizon Agent RL in Craftax
+# LLM Priors vs. Learned World Models in Craftax
 
-**If a pretrained language model and a world model built from scratch get exactly the
-same amount of game experience, which one plays better?**
+### Model-free RL, model-based planning, and policy distillation under a limited interaction budget
 
-This repo runs the comparison inside one
-harness, and then follows the result somewhere more interesting than the scoreboard.
+> **Status:** The results below are from 60 paired development worlds. An untouched 80-world test set is reserved for one final evaluation after the experimental design is frozen.
 
-The game is [Craftax](https://github.com/MichaelTMatthews/Craftax) (full version): a
-2D survival game in the Minecraft family, with a tech tree running from wood to
-diamond, meters for hunger, thirst and energy, monsters, and a nine-floor dungeon
-underneath. 
-Everything in this repo — the environment harness, the agent, the RL training, the
-world model, and the evaluation statistics — was built and run end to end as one
-project.
+## Overview
 
-## How the agent plays
+This project asks a practical agent-learning question:
 
-Rather than emitting raw keypresses, the agent chooses one **macro-action** per turn
-from a menu the harness builds for the current situation — things like
-`craft(stone_pickaxe)`, `fight(zombie)`, `drink_water`, `descend`. A scripted
-controller then carries that choice out over however many game steps it needs. One
-turn of thinking becomes roughly seven game steps of doing.
+> **Given only 3,200 environment decisions, what does a pretrained LLM learn through PPO, what does a structured world model learn from interaction, and can distillation combine their complementary strengths?**
 
-That design puts a clean question in the middle of the project: *what should do the
-choosing?* Four candidates get exactly the same 3,200 turns of experience to become
-good at it, and everything else about them is held equal.
+I built a common Craftax harness and compared four agent systems:
 
-## The program, in five stages
+| System | Method | Training interactions | Role |
+|---|---|---:|---|
+| **FROZEN** | Qwen3-4B ranks grounded actions without training | 0 | Pretrained-policy reference |
+| **PPO** | The same LLM fine-tuned with semi-Markov PPO + GAE | 3,200 | Standard model-free RL baseline |
+| **TEACHER** | Randomly initialized structured world-model ensemble + value network | 3,200 | Model-based planner with no LLM prior |
+| **DISTILL** | Teacher policy distilled into Qwen3-4B | Inherits 3,600 teacher decisions; no new interactions | Fast deployable policy |
 
-1. **The matched-budget comparison** *(done — results below)*. Four systems, 3,200
-   training decisions each: a frozen LLM, the same LLM fine-tuned with PPO, a
-   from-scratch world model that plans, and that planner distilled back into the LLM.
-2. **Floor transfer and few-shot adaptation** *(done for floor 1)*. Drop everyone into
-   the dungeon, which nobody trained on. Whose knowledge transfers? Who adapts
-   fastest when given a little local experience?
-3. **Distillation** *(done — result 4 below)*. Combine the LLM's deep game knowledge
-   with the world model's learned survival instincts into a single policy.
-4. **Full-depth training** *(ahead)*. Push training below the surface floor using a
-   bank of saved game states as a curriculum, working toward all nine floors.
-5. **Long-horizon credit assignment** *(ahead)*.
-   Once trajectories run deep, use exact save-and-replay branching to ask "which
-   decision two hundred steps ago made this diamond possible?", and test whether
-   answering it properly beats standard advantage estimation.
+The primary matched-interaction comparison is **PPO versus TEACHER**. FROZEN is a no-training reference. DISTILL is reported separately because it inherits the teacher's data after an additional 400-decision dungeon-adaptation stage.
 
-## Results so far
+## Headline results
 
-### 1. Given equal experience, the from-scratch world model wins
+On 60 paired surface worlds:
 
-60 evaluation worlds, played by every system so the comparison is paired
-world-by-world rather than averaged across different games. 3,200 training decisions
-each, identical menus, one shared evaluator:
+| System | Reward | Achievements | Survival |
+|---|---:|---:|---:|
+| **TEACHER** | **10.61** | **10.6** | **90%** |
+| PPO | 7.66 | 8.5 | 52% |
+| FROZEN | 7.29 | 8.1 | 48% |
 
-| system | reward | achievements | survival | vs. frozen |
-|---|---:|---:|---:|---|
-| **World-model planner** (from scratch, no LLM, ~0 GPU) | **10.61** | **10.6** | **90%** | **+3.32, p<0.001** |
-| PPO-fine-tuned LLM (Qwen3-4B, 3.2 GPU-hours) | 7.66 | 8.5 | 52% | +0.36, not significant |
-| Frozen LLM (Qwen3-4B) | 7.29 | 8.1 | 48% | — |
+The TEACHER exceeded FROZEN by **+3.32 reward** under paired evaluation ($p<0.001$). A second independently initialized teacher reproduced the result with **11.75 reward, 11.9 achievements, and 90% survival**.
 
-A small model that starts from random weights and trains in CPU minutes beats a
-4-billion-parameter pretrained planner on reward, achievements and survival
-simultaneously — and the result replicates: a second teacher trained from a
-different random seed scored 11.75 reward with the same 90% survival, beating the
-frozen LLM at p<0.001 on all three metrics again. And PPO, on this budget, is
-statistically indistinguishable from not training at all.
+Under the same 3,200-decision budget, PPO showed **no detectable improvement** over FROZEN ($+0.36$ reward, $p=0.22$). This is a result for the current model, action interface, training setup, and budget—not a general claim that PPO cannot learn Craftax.
 
-### 2. But they know different things — and each dies of what it doesn't know
+### The systems learned complementary knowledge
 
-- The LLMs walk the deep tech chain straight out of the box (iron in 14 of 60 worlds). The world model never found iron on
-  the surface: its exploration never reached the ore.
-- The LLMs also **die of thirst**. The LLM prior has no
-  such habit — and 3,200 decisions of PPO did not patch the hole. The world model
-  learned the meters this game actually has and survives 90% of its episodes.
-- One floor down, in a dungeon nobody trained on, the pattern inverts precisely. The
-  world model's surface habit — sleep when tired, which is perfectly safe up there —
-  becomes its leading cause of death in a monster-filled dungeon. The LLM prior has no
-  sleep habit and therefore cannot make that particular mistake. **Each system dies
-  exactly where its knowledge came from somewhere else.**
+- **The pretrained LLM knew the long crafting chain.** It reached iron in 14 of 60 worlds without environment training.
+- **The LLM largely missed Craftax-specific thirst.** FROZEN and PPO frequently died of dehydration.
+- **The world-model planner learned survival and broad surface competence.** It reached 90% survival, but did not discover the long sequence required to reach iron on the surface.
+- **After 400 floor-1 decisions, the teacher adapted rapidly.** Its dungeon reward increased from **4.81 to 13.46**, and it learned coal, furnaces, torches, bows, potions, iron, and diamond behavior.
+- **Distillation transferred survival into the LLM without new interactions.** The distilled policy reached **9.75 reward**, survived **53/60 worlds**, and had **zero dehydration deaths**. It also revealed a tradeoff: more decisions spent on upkeep reduced some deep crafting progress, and one unsafe dungeon sleeping habit transferred with the teacher.
 
-### 3. Given a little dungeon experience, the world model adapts about 10× faster
+The main conclusion is not that one system dominates everywhere:
 
-Both learning systems got 400 dungeon decisions and one standard update apiece. The
-world model nearly tripled its dungeon score (4.81 → 13.46, p<0.001), unlearned the
-fatal sleep habit, and picked up the entire dungeon economy — coal, furnaces, potions,
-bows, **iron and diamond** — while forgetting none of its surface skills.
+> **Pretrained semantic knowledge and environment-grounded model learning produce different competence, different blind spots, and different transfer failures.**
 
-The same 400 decisions barely moved the LLM. The reason is not data quality: PPO's
-batch was just as rich, and its own internal estimates pointed at the right lessons.
-The bottleneck is absorption. PPO's trust region — the safety rule that stops a policy
-from moving too far in one update — tripped after a single 16-state step, because
-unfamiliar states make the policy hypersensitive. The world model simply refits on
-everything it has ever seen and re-plans.
+## Agent architecture
 
-A follow-up A/B closed the loophole in that explanation: with that rule switched off the update ran 22× further and still produced no
-adaptation — PPO scored the same as not training at all. So the rule tripping was a
-symptom, not the cause: the update was free to run and had nothing to absorb. A
-policy gradient can only nudge the probabilities of actions it happened to take,
-while the world model turns the same experience into updated beliefs and replans
-every decision. The 10× adaptation gap looks structural to the algorithm class rather
-than to the safety setting first blamed.
+All systems use the same hierarchical interface:
 
-### 4. Distilling the world model back into the LLM mostly works — and its two failures were predicted in advance
+```mermaid
+flowchart LR
+    O[Observation and agent memory] --> M[Grounded macro-action menu]
+    M --> S{Action selector}
+    S -->|FROZEN / PPO / DISTILL| L[Qwen3-4B menu policy]
+    S -->|TEACHER| W[World-model ensemble + value network]
+    L --> E[Scripted skill controller]
+    W --> E
+    E --> C[Craftax primitive actions]
+    C --> R[Reward, next state, and decision log]
+```
 
-The last arm teaches the world model's decisions back to the LLM. Both rank the same
-menu, so every decision the world model made during its own training is already a
-labelled example and no new game experience is needed. Two guards stop the lesson
-from overwriting what the LLM already knows: the teacher's preferences are damped on
-actions the LLM considers absurd, and a penalty holds the student at its original
-behaviour wherever the teacher is unsure. Survival actions are exempt from the first
-guard — "the LLM thinks drinking is pointless" is the disease being treated.
+At each planner decision, the harness constructs up to 20 feasible macro-actions such as:
 
-The result is the second-best system measured here: **9.75 reward — far above the
-frozen LLM (7.29, p<0.001) and statistically tied with its own search-based teacher —
-at one forward pass per decision** instead of a search over an ensemble. It drinks
-339 times and **never once dies of thirst** (frozen: zero drinks, 29 thirst deaths):
-the mechanic RL couldn't install, delivered by distillation from the same experience.
-Five predictions were written down before the run and two failed, both reported as
-failures — deep-tier reach shrank (iron in 8 worlds, was 14) because 28% of its turns
-now go to upkeep and a 40-turn episode can't fit everything, and the teacher's risky
-dungeon sleep habit came along with the rest.
+```text
+go_to(tree)
+craft(stone_pickaxe)
+fight(zombie)
+drink_water
+open_chest
+descend
+```
 
-## Why you can trust the comparison
-The guardrails here, each of which exists because something went wrong first:
+A scripted controller executes the selected macro-action over a variable number of primitive game steps.
 
-- **Matched budgets, audited after the fact.** 3,200 decisions per system, counted
-  from each run's own log files rather than from what the driver script intended.
-- **One action menu for everyone**, built on the rule *if an action is offered, it can
-  actually be performed*. 
-- **Paired statistics with stated power.** Every system plays the *same* 60 worlds;
-  verdicts come from a paired bootstrap over worlds and each one reports its minimum
-  detectable effect, so a null result is labelled underpowered or null rather than
-  read as "equal". 
-- **Predictions written down before the results exist.** Before an experiment runs,
-  what it is expected to show is written into the script that launches it. 
-- **Checks before compute.** More than a dozen gate scripts — menu correctness,
-  reward-head exactness, gradient correctness, evaluator consistency — must pass
-  before a run is allowed to spend any budget.
-- **A test set nobody has touched.** Every number here is from development worlds.
-  Eighty held-out worlds are reserved and will be spent exactly once, at the end.
+### Grounded action contract
 
-What is deliberately **not** held equal: starting knowledge and compute. The LLM
-arms begin with an internet-scale prior and spend GPU-hours; the world model begins
-with random weights and trains in CPU minutes. That asymmetry is not a flaw in the
-study — it is the subject of the study, and it is reported rather than equalised.
+The menu follows two rules:
+
+1. **Offered means executable.** Impossible crafts, unreachable targets, and zero-step survival actions are filtered out.
+2. **Availability is not value.** A visible chest may create an `open_chest` option, but the menu does not tell the agent whether opening it is useful.
+
+The constructor reads only the agent's observation and map memory. It shares grounding predicates with the executor, and every data file records the action-menu version.
+
+### Semi-Markov time accounting
+
+Macro-actions have different durations. A fight may take three primitive steps; navigation may take forty. The project therefore discounts by elapsed primitive game time rather than once per planner decision.
+
+For macro-action duration $\tau_t$:
+
+$$
+R_t^{\mathrm{macro}}
+=
+\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
+$$
+
+The same duration-aware accounting is used by PPO, GAE, value fitting, and model-based action scoring.
+
+## The learning systems
+
+### PPO: LLM actor with duration-aware GAE
+
+Qwen3-4B defines a categorical policy over the full grounded menu. Each candidate string is scored by its length-normalized average token log-probability, divided by a calibrated temperature, and normalized across candidates.
+
+PPO uses one scalar probability ratio for the sampled menu action. The ratio includes the same $\varepsilon=0.05$ exploration mixture used during collection. GAE uses primitive-time discounting and correctly distinguishes true death from rollout truncation.
+
+### TEACHER: structured model-based planning
+
+The TEACHER has no LLM. A three-member bootstrap ensemble predicts, for each state-action pair:
+
+- the next 132-feature structured state;
+- immediate reward;
+- action duration;
+- death probability;
+- achievement and interaction events.
+
+Typed output heads use losses appropriate to counts, binary variables, categories, and continuous quantities. A separate value network estimates continuation value.
+
+During collection, one ensemble member is sampled per episode for coherent Thompson-style exploration. During evaluation, the planner uses a pessimistic score based on ensemble mean minus uncertainty.
+
+A key design is **rare-event shrinkage**: per-achievement predictions borrow strength from a pooled “any achievement” estimate when data is scarce, then rely increasingly on their own evidence as counts grow. This single change improved reward by approximately 3.3 points.
+
+### DISTILL: transfer the planning policy into the LLM
+
+The teacher and LLM rank the same menus, so teacher logs provide supervised targets without additional environment interaction. Distillation uses:
+
+- a soft teacher distribution over menu actions;
+- a prior-based trust region toward the base LLM;
+- a confidence gate that suppresses uncertain teacher labels;
+- a KL anchor that protects the pretrained policy where the teacher has weak evidence.
+
+The result is a single-forward-pass LLM policy that retains much of the teacher's survival behavior, while exposing measurable interference and opportunity-cost tradeoffs.
+
+## Experimental discipline
+
+The evaluation infrastructure is a major part of the project:
+
+- **Paired worlds:** every system plays the same seeds.
+- **Paired bootstrap:** confidence intervals and two-sided $p$-values use 10,000 paired resamples.
+- **Minimum detectable effect:** every comparison reports what effect size the evaluation had enough power to detect.
+- **Pre-registered predictions:** expected outcomes and refutation branches are written into experiment drivers before runs.
+- **Budget accounting from logs:** interaction counts come from each run's recorded decisions, not intended configuration.
+- **Gated correctness checks:** menu feasibility, reward assembly, GAE, gradients, evaluator consistency, and policy definitions are tested before expensive runs.
+- **Held-out test set:** 80 worlds remain untouched for one final evaluation.
+
+Several apparent findings from early 10-world evaluations disappeared at 60 worlds. Those negative results are retained in the report rather than removed.
+
+## Engineering lessons
+
+A large fraction of the work was making the comparison trustworthy:
+
+- An early planner spent **61% of its budget on zero-step actions** because action availability and execution had drifted apart.
+- Impossible crafts consumed roughly **30% of decisions** before the full placement cost was included.
+- A duplicated death rule wrote post-death transitions into one training set.
+- Carrying only the number of achievements—not their identities—made the reward model unable to know which rewards were already spent.
+- Serving and training stacks produced measurably different policy scores, requiring explicit policy-version and probability checks.
+- A cached candidate-scoring implementation could produce correct forward scores with incorrect gradients, so the test suite includes a deliberately broken reference path.
+
+These failures shaped the final architecture and are documented because they are part of the research-engineering contribution.
+
+## Limitations
+
+- Current headline numbers are development-set results; the final test set remains untouched.
+- The teacher has two training seeds; PPO and distillation currently have one each.
+- The study uses one game, one LLM size, and 40-decision evaluation episodes.
+- The grounded action menu and scripted skills do substantial work; this is not raw-token or primitive-control RL.
+- Most training so far occurs on the surface. Floor-1 experiments study near-zero-shot behavior and few-shot adaptation, not full multi-floor training.
+- Floor-1 adaptation data and evaluation states are not yet separated into a strict held-out adaptation protocol.
+
+## Roadmap
+
+- [x] Build a verified hierarchical Craftax harness and common action interface.
+- [x] Implement duration-aware PPO + GAE for an LLM actor.
+- [x] Train and replicate a structured model-based planner.
+- [x] Evaluate near-zero-shot floor transfer and 400-decision dungeon adaptation.
+- [x] Distill the model-based policy into Qwen3-4B and measure interference.
+- [ ] Run the untouched 80-world test set once.
+- [ ] Train through deeper floors with a saved-state curriculum.
+- [ ] Study long-horizon counterfactual credit assignment using exact simulator branching.
+
+The planned credit-assignment extension will compare standard duration-aware GAE with intervention-supervised counterfactual credit while holding the LLM actor, PPO optimizer, action interface, and initialization fixed.
+
+## Documentation
+
+- [`docs/PROJECT_REPORT.md`](docs/PROJECT_REPORT.md) — accessible research narrative, results, ablations, and limitations.
+- [`docs/TECHNICAL_APPENDIX.md`](docs/TECHNICAL_APPENDIX.md) — exact action-menu contract, world-model architecture, semi-Markov PPO formulation, exploration-mixture correction, and distillation losses.
 
 ## What's in the repo
 
@@ -171,60 +216,9 @@ Collected rollouts and model checkpoints are **not** in the repo.
 Everything they contain is regenerable from the drivers, and every finding derived
 from them lives in the reports.
 
-## Running it
+---
 
-Two environments, deliberately isolated so that neither can accidentally depend on
-the other: the game, the RL core and the world model run on CPU, while the language
-model runs on a GPU behind a serving stack. They communicate only through files.
+**Project theme:** model-free RL, model-based planning, policy distillation, sample-efficient adaptation, and long-horizon agent evaluation.---
 
-```bash
-# CPU environment — the game, the RL core, the world model, all evaluation
-python3.10 -m venv envs/craftax
-envs/craftax/bin/pip install -r requirements.txt
-
-# GPU environment — only needed for the LLM arms (frozen, PPO, distillation)
-python3.10 -m venv envs/vllm
-envs/vllm/bin/pip install vllm peft transformers torch
-```
-
-Quick checks, which run on CPU in seconds to minutes and are the fastest way to see
-what this project considers a correctness test:
-
-```bash
-PY=envs/craftax/bin/python
-$PY scripts/preflight.py --help        # the comparability gate that blocks bad runs
-$PY scripts/reward_head_demo.py        # reward-head exactness
-$PY scripts/ppo_core_demo.py           # semi-Markov returns, GAE and the PPO ratio
-```
-
-The experiments themselves:
-
-```bash
-bash scripts/run_s6_teacher.sh         # world-model planner, CPU, ~2 h, no GPU at all
-bash scripts/run_s3_ppo.sh             # PPO loop, GPU, ~8 h
-bash scripts/s11_fewshot_teacher.sh    # the dungeon few-shot arm, CPU, ~1 h
-
-# paired statistics for any two result files
-$PY scripts/m5_verdict.py --teacher <a.jsonl> --frozen <b.jsonl>
-```
-
-Every driver is resumable: rerunning one skips the stages whose outputs already exist,
-so an interrupted run continues rather than restarting.
-
-## Honest caveats
-
-- All results are from development worlds (seeds 40–99). The test set (seeds 100–179)
-  is reserved and unspent.
-- The world-model headline is replicated across two training seeds; PPO still has
-  one. The two teacher seeds differ from each other by ~1.1 reward — a first
-  estimate of training-seed variance, and a reason to read internal ablation steps
-  of similar size (one sits right at p=0.05) with caution.
-- Training so far happens on the surface floor only; the dungeon results are transfer
-  and few-shot studies. Stages 4 and 5 are the open half of the program.
-
-## Where to read next
-
-1. **[project_report.md](project_report.md)** — the full story: motivation, design
-   decisions, results, and what it took to measure them. Its appendix has the precise
-   contracts and formulas for the action constructor, the world model, and the
+\
    semi-Markov PPO implementation.
