@@ -88,9 +88,7 @@ Macro-actions have different durations. A fight may take three primitive steps; 
 For macro-action duration $\tau_t$:
 
 $$
-R_t^{\mathrm{macro}}
-=
-\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
+R_t^{\mathrm{macro}}=\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
 $$
 
 The same duration-aware accounting is used by PPO, GAE, value fitting, and model-based action scoring.
@@ -143,19 +141,6 @@ The evaluation infrastructure is a major part of the project:
 - **Held-out test set:** 80 worlds remain untouched for one final evaluation.
 
 Several apparent findings from early 10-world evaluations disappeared at 60 worlds. Those negative results are retained in the report rather than removed.
-
-## Engineering lessons
-
-A large fraction of the work was making the comparison trustworthy:
-
-- An early planner spent **61% of its budget on zero-step actions** because action availability and execution had drifted apart.
-- Impossible crafts consumed roughly **30% of decisions** before the full placement cost was included.
-- A duplicated death rule wrote post-death transitions into one training set.
-- Carrying only the number of achievements—not their identities—made the reward model unable to know which rewards were already spent.
-- Serving and training stacks produced measurably different policy scores, requiring explicit policy-version and probability checks.
-- A cached candidate-scoring implementation could produce correct forward scores with incorrect gradients, so the test suite includes a deliberately broken reference path.
-
-These failures shaped the final architecture and are documented because they are part of the research-engineering contribution.
 
 ## Limitations
 
@@ -214,7 +199,4 @@ from them lives in the reports.
 
 ---
 
-**Project theme:** model-free RL, model-based planning, policy distillation, sample-efficient adaptation, and long-horizon agent evaluation.---
-
-\
-   semi-Markov PPO implementation.
+**Project theme:** model-free RL, model-based planning, policy distillation, sample-efficient adaptation, and long-horizon agent evaluation.
