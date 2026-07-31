@@ -165,11 +165,9 @@ eval/           paired-bootstrap statistics and the single shared evaluator
 scripts/        drivers for every experiment, the gate scripts, and the verdict and
                 audit tools
 configs/        the frozen hyperparameters for the world model, PPO and distillation
-docs/           METRICS.md (the measurement contract), LESSONS.md (the engineering
-                rules this project paid for), ACTION_INTERFACE.md, DISTILL_DESIGN.md
 ```
 
-Collected rollouts (2.7 GB) and model checkpoints (116 GB) are **not** in the repo.
+Collected rollouts and model checkpoints are **not** in the repo.
 Everything they contain is regenerable from the drivers, and every finding derived
 from them lives in the reports.
 
@@ -223,8 +221,6 @@ so an interrupted run continues rather than restarting.
   of similar size (one sits right at p=0.05) with caution.
 - Training so far happens on the surface floor only; the dungeon results are transfer
   and few-shot studies. Stages 4 and 5 are the open half of the program.
-- One game, one model size (4B), 40-turn episodes. What is a result here is a
-  hypothesis anywhere else.
 
 ## Where to read next
 
@@ -232,8 +228,3 @@ so an interrupted run continues rather than restarting.
    decisions, results, and what it took to measure them. Its appendix has the precise
    contracts and formulas for the action constructor, the world model, and the
    semi-Markov PPO implementation.
-2. [PROGRESS.md](PROGRESS.md) — the running lab notebook: denser, with every ablation
-   and every negative result in the order they happened.
-3. [docs/METRICS.md](docs/METRICS.md) — the pre-registered measurement contract.
-4. [docs/LESSONS.md](docs/LESSONS.md) — the engineering rules this project paid for,
-   each written against the incident that motivated it.
