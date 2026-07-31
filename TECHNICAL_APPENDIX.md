@@ -1,6 +1,6 @@
 # Technical Appendix: Craftax Agent Comparison
 
-This appendix contains the implementation contracts and equations behind the public report, [`CRAFTAX_PROJECT_REPORT_GITHUB.md`](CRAFTAX_PROJECT_REPORT_GITHUB.md). It is intentionally more technical than the main report.
+This appendix contains the implementation contracts and equations behind the public report, [`PROJECT_REPORT.md`](PROJECT_REPORT.md). It is intentionally more technical than the main report.
 
 ## A. Grounded macro-action interface
 
