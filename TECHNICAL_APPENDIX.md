@@ -195,15 +195,7 @@ The action is encoded using a 61-dimensional typed representation containing the
 Each ensemble member predicts
 
 $$
-M_{\psi_m}(x_t,a_t)
-\rightarrow
-\left(
-\widehat x_{t+1},
-\widehat r_t,
-\widehat\tau_t,
-\widehat d_t,
-\widehat y_t
-\right).
+M_{\psi_m}(x_t,a_t)\rightarrow\left(\widehat x_{t+1},\widehat r_t,\widehat\tau_t,\widehat d_t,\widehat y_t\right)
 $$
 
 The event vector $\widehat y_t$ contains 67 per-achievement unlock events and general events such as chest opening, floor transition, action success, and any-achievement unlock.
@@ -229,15 +221,7 @@ Predicting residual changes makes "no state change" the default, which is approp
 Craftax reward is largely a known sum of one-time achievement rewards plus a health-change term. The model predicts the ingredients and assembles reward:
 
 $$
-\widehat r
-=
-\underbrace{\sum_k w_k\widehat p_k c_k}_{\text{per-achievement term}}
-+
-\underbrace{\widehat p_{\mathrm{any}}
-\frac{\sum_k(1-w_k)c_k\mathbf 1[\text{locked}_k]}
-{\#\text{locked}}}_{\text{pooled rare-event term}}
-+
-0.1\widehat{\Delta\mathrm{health}}.
+\widehat r=\underbrace{\sum_k w_k\widehat p_k c_k}_{\text{per-achievement term}}+\underbrace{\widehat p_{\mathrm{any}}\frac{\sum_k(1-w_k)c_k\mathbf 1[\text{locked}_k]}{\#\text{locked}}}_{\text{pooled rare-event term}}+0.1\widehat{\Delta\mathrm{health}}.
 $$
 
 Already-unlocked achievements are masked to zero because the game never pays them twice.
@@ -259,13 +243,7 @@ A separate value network $V_\omega(x)$ estimates discounted return under the cur
 For ensemble member $m$,
 
 $$
-Q_m(h,a)
-=
-\widehat r_m(h,a)
-+
-\gamma^{\max(\widehat\tau_m,1)}
-\left(1-\widehat d_m(h,a)\right)
-V_\omega(\widehat x'_m(h,a)).
+Q_m(h,a)=\widehat r_m(h,a)+\gamma^{\max(\widehat\tau_m,1)}\left(1-\widehat d_m(h,a)\right)V_\omega(\widehat x'_m(h,a)).
 $$
 
 Let
@@ -305,19 +283,13 @@ Only the data persists between rounds. The small models are retrained rather tha
 The teacher's deployment score is
 
 $$
-S_{\mathrm{teacher}}(h,a)
-=
-\mu_Q(h,a)-0.5U(h,a).
+S_{\mathrm{teacher}}(h,a)=\mu_Q(h,a)-0.5U(h,a)
 $$
 
 The reported distillation run constructs a target distribution
 
 $$
-q^*(a\mid h)
-\propto
-\pi_{\mathrm{base}}(a\mid h)
-\exp\left(\frac{S_{\mathrm{teacher}}(h,a)}{\beta}\right),
-\qquad \beta=1.
+q^*(a\mid h)\propto\pi_{\mathrm{base}}(a\mid h)\exp\left(\frac{S_{\mathrm{teacher}}(h,a)}{\beta}\right),\qquad \beta=1.
 $$
 
 The base-policy factor acts as a trust region in the pretrained prior.
@@ -327,10 +299,7 @@ The base-policy factor acts as a trust region in the pretrained prior.
 The teacher contributes only on states satisfying
 
 $$
-w(h)
-=
-\mathbf 1[\mathrm{margin}(h)\ge m_{\min}]
-\mathbf 1[U_{\mathrm{chosen}}(h)\le u_{\max}].
+w(h)=\mathbf 1[\mathrm{margin}(h)\ge m_{\min}]\mathbf 1[U_{\mathrm{chosen}}(h)\le u_{\max}].
 $$
 
 The thresholds are calibrated from the teacher's training log rather than evaluation outcomes.
@@ -338,11 +307,7 @@ The thresholds are calibrated from the teacher's training log rather than evalua
 The loss is
 
 $$
-\mathcal L(h)
-=
-w(h)\sum_{a\in C(h)}q^*(a\mid h)(-\log\pi_\theta(a\mid h))
-+
-\lambda\,\mathrm{KL}\left(\pi_\theta(\cdot\mid h)\|\pi_{\mathrm{base}}(\cdot\mid h)\right),
+\mathcal L(h)=w(h)\sum_{a\in C(h)}q^*(a\mid h)(-\log\pi_\theta(a\mid h))+\lambda\,\mathrm{KL}\left(\pi_\theta(\cdot\mid h)\|\pi_{\mathrm{base}}(\cdot\mid h)\right)
 $$
 
 with $\lambda=0.1$.
@@ -363,16 +328,11 @@ The student uses the same menu policy representation, action serialization, leng
 A second experiment replaced the hand-written survival exception with an evidence-dependent prior veto:
 
 $$
-q^*(a\mid h)
-\propto
-\max(\pi_{\mathrm{base}}(a\mid h),e^{-V})^{1-w_a}
-\exp\left(\frac{S_{\mathrm{teacher}}(h,a)}{\beta}\right),
+q^*(a\mid h)\propto\max(\pi_{\mathrm{base}}(a\mid h),e^{-V})^{1-w_a}\exp\left(\frac{S_{\mathrm{teacher}}(h,a)}{\beta}\right),
 $$
 
 $$
-w_a
-=
-\frac{n_{f(a),b}}{n_{f(a),b}+m}.
+w_a=\frac{n_{f(a),b}}{n_{f(a),b}+m}
 $$
 
 Here $f(a)$ is the action family and $b$ is the surface/dungeon bucket. The method recovered placing and suppressed unsafe dungeon sleeping, but assigned too much probability to placing, crowding out drinking and deep crafting. It remains an ablation rather than the reported student.
