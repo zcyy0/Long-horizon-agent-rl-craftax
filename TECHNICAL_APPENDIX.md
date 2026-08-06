@@ -63,9 +63,7 @@ Planner decisions are macro-actions. Decision $t$ lasts $\tau_t$ primitive steps
 The within-action discounted reward is
 
 $$
-R_t^{\mathrm{macro}}
-=
-\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
+R_t^{\mathrm{macro}}=\sum_{j=0}^{\tau_t-1}\gamma^j r_{t,j}.
 $$
 
 If
@@ -77,9 +75,7 @@ $$
 then the planner-level return is
 
 $$
-G
-=
-\sum_t\gamma^{T_t}R_t^{\mathrm{macro}}.
+G=\sum_t\gamma^{T_t}R_t^{\mathrm{macro}}.
 $$
 
 This is algebraically equal to the ordinary discounted return over the flat primitive-step reward stream.
@@ -101,21 +97,11 @@ at bootstrap boundaries. The menu should already eliminate zero-step actions; th
 For true termination flag $d_t$,
 
 $$
-\delta_t
-=
-R_t^{\mathrm{macro}}
-+
-\gamma^{\tau_t^{\mathrm{eff}}}(1-d_t)V(h_{t+1})
--
-V(h_t),
+\delta_t=R_t^{\mathrm{macro}}+\gamma^{\tau_t^{\mathrm{eff}}}(1-d_t)V(h_{t+1})-V(h_t),
 $$
 
 $$
-\widehat A_t
-=
-\delta_t
-+
-\gamma^{\tau_t^{\mathrm{eff}}}\lambda(1-d_t)\widehat A_{t+1}.
+\widehat A_t=\delta_t+\gamma^{\tau_t^{\mathrm{eff}}}\lambda(1-d_t)\widehat A_{t+1}.
 $$
 
 Current settings are $\gamma=0.99$ per primitive game step and $\lambda=0.95$ per macro-decision.
@@ -127,11 +113,7 @@ True death sets the bootstrap to zero. A rollout cut off by a time or decision l
 For candidate action $a$ serialized as tokens $y_{1:L_a}$,
 
 $$
-s_\theta(h,a)
-=
-\frac{1}{L_a^\alpha}
-\sum_{j=1}^{L_a}
-\log p_\theta(y_j\mid h,y_{<j}),
+s_\theta(h,a)=\frac{1}{L_a^\alpha}\sum_{j=1}^{L_a}\log p_\theta(y_j\mid h,y_{<j}),
 $$
 
 with $\alpha=1$.
@@ -139,10 +121,7 @@ with $\alpha=1$.
 The categorical menu policy is
 
 $$
-\pi_\theta(a\mid h,C)
-=
-\frac{\exp(s_\theta(h,a)/T)}
-{\sum_{a'\in C}\exp(s_\theta(h,a')/T)}.
+\pi_\theta(a\mid h,C)=\frac{\exp(s_\theta(h,a)/T)}{\sum_{a'\in C}\exp(s_\theta(h,a')/T)}.
 $$
 
 The current calibrated temperature is approximately $T=0.129$. The same action serialization, length normalization, and temperature are used during rollout collection, PPO training, and distillation.
@@ -152,34 +131,19 @@ The current calibrated temperature is approximately $T=0.129$. The same action s
 Collection uses an $\varepsilon=0.05$ category-balanced exploration floor $u(h,a)$:
 
 $$
-\mu_\theta(a\mid h)
-=
-(1-\varepsilon)\pi_\theta(a\mid h)
-+
-\varepsilon u(h,a).
+\mu_\theta(a\mid h)=(1-\varepsilon)\pi_\theta(a\mid h)+\varepsilon u(h,a).
 $$
 
 The sampled environment action is one menu index, so PPO uses one scalar ratio per decision:
 
 $$
-\rho_t
-=
-\frac{\mu_{\theta}(a_t\mid h_t)}
-{\mu_{\theta_{\mathrm{old}}}(a_t\mid h_t)}.
+\rho_t=\frac{\mu_{\theta}(a_t\mid h_t)}{\mu_{\theta_{\mathrm{old}}}(a_t\mid h_t)}.
 $$
 
 The clipped objective is
 
 $$
-\mathcal L_{\mathrm{policy}}
-=
--\mathbb E_t
-\left[
-\min\left(
-\rho_t\widehat A_t,
-\operatorname{clip}(\rho_t,1-\epsilon_{\mathrm{clip}},1+\epsilon_{\mathrm{clip}})\widehat A_t
-\right)
-\right].
+\mathcal L_{\mathrm{policy}}=-\mathbb E_t\left[\min\left(\rho_t\widehat A_t,\operatorname{clip(\rho_t,1\epsilon_{\mathrm{clip}},1+\epsilon_{\mathrm{clip}})\widehat A_t\right)\right].
 $$
 
 Although $\rho_t$ is scalar, gradients flow through the complete menu softmax, including the alternative candidates in the denominator.
