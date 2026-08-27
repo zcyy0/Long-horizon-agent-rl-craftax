@@ -143,7 +143,7 @@ $$
 The clipped objective is
 
 $$
-\mathcal L_{\mathrm{policy}}=-\mathbb E_t\left[\min\left(\rho_t\widehat A_t,\mathrm{clip(\rho_t,1\epsilon_{\mathrm{clip}},1+\epsilon_{\mathrm{clip}})\widehat A_t\right)\right].
+\mathcal L_{\mathrm{policy}}=-\mathbb E_t\left[\min\left(\rho_t\widehat A_t,\mathrm{clip}(\rho_t,1\epsilon_{\mathrm{clip}},1+\epsilon_{\mathrm{clip}})\widehat A_t\right)\right].
 $$
 
 Although $\rho_t$ is scalar, gradients flow through the complete menu softmax, including the alternative candidates in the denominator.
