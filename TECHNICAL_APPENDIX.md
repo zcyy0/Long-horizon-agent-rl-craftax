@@ -221,7 +221,7 @@ Predicting residual changes makes "no state change" the default, which is approp
 Craftax reward is largely a known sum of one-time achievement rewards plus a health-change term. The model predicts the ingredients and assembles reward:
 
 $$
-\widehat r=\underbrace{\sum_k w_k\widehat p_k c_k}_{\text{per-achievement term}}+\underbrace{\widehat p_{\mathrm{any}}\frac{\sum_k(1-w_k)c_k\mathbf 1[\text{locked}_k]}{\#\text{locked}}}_{\text{pooled rare-event term}}+0.1\widehat{\Delta\mathrm{health}}.
+\widehat r=\underbrace{\sum_k w_k\widehat p_k c_k}_{\text{per-achievement term}}+\underbrace{\widehat p_{\mathrm{any}}\frac{\sum_k(1-w_k)c_k\mathbf 1[\text{locked}_k]}{\text{#locked}}}_{\text{pooled rare-event term}}+0.1\widehat{\Delta\mathrm{health}}.
 $$
 
 Already-unlocked achievements are masked to zero because the game never pays them twice.
