@@ -69,7 +69,7 @@ $$
 If
 
 $$
-T_t=\sum_{i<t}\tau_i,
+T_t= \sum_{i\lt t}\tau_i,
 $$
 
 then the planner-level return is
