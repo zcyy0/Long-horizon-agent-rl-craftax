@@ -113,7 +113,7 @@ True death sets the bootstrap to zero. A rollout cut off by a time or decision l
 For candidate action $a$ serialized as tokens $y_{1:L_a}$,
 
 $$
-s_\theta(h,a)=\frac{1}{L_a^\alpha}\sum_{j=1}^{L_a}\log p_\theta(y_j\mid h,y_{<j}),
+s_\theta(h,a)=\frac{1}{L_a^\alpha}\sum_{j=1}^{L_a}\log p_\theta(y_j\mid h,y_{\lt j}),
 $$
 
 with $\alpha=1$.
