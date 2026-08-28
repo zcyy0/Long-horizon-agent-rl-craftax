@@ -19,10 +19,6 @@ The menu is capped at 20 actions; the largest observed menu in the current exper
 
 **Availability is not value.** The constructor filters impossible actions but does not remove legal actions merely because they appear strategically poor. For example, fighting at low health remains available if the game permits it.
 
-The rule is:
-
-> **The constructor rejects the impossible; the policy owns the unwise.**
-
 ### A.2 Examples of grounding conditions
 
 | Action | Offered when |
